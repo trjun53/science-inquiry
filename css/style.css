@@ -45,7 +45,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
   flex: 1; min-width: 120px; display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid var(--line);
   background: var(--card); border-radius: 12px; cursor: pointer; color: var(--ink2); font-weight: 500; text-align: left;
 }
-.step .label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.step { min-width: 0; }
+.step .label { line-height: 1.25; word-break: keep-all; }
+@media (max-width: 1000px) { .step { padding: 8px; gap: 6px; font-size: 13.5px; } }
 .step .num { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; background: #eef2f7; font-size: 12px; font-weight: 700; flex-shrink: 0; }
 .step.active { border-color: var(--primary); color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
 .step.active .num { background: var(--primary); color: #fff; }
@@ -138,11 +140,99 @@ aside .side { position: static; }
 .unit-meta { display: flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 500; color: var(--muted); margin-top: 1px; }
 .unit-meta i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
 
+.stepper[hidden] { display: none; }
+
+/* 교과서 선택 */
+.pub-row { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 10px; background: #f8fafc; border-radius: 12px; }
+.pub-label { font-size: 13px; font-weight: 700; color: var(--ink2); }
+.chip-btn.sm { padding: 5px 12px; font-size: 13px; }
+.pub-hint { grid-column: 1 / -1; margin: 0; }
+.has-sensor { color: #0f766e; font-weight: 700; }
+
+/* 실험 및 측정 */
+.conn-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; border-radius: 12px; padding: 10px 14px; margin-bottom: 16px; font-size: 14px; }
+.conn-bar.ok { background: #ecfdf5; border-color: #a7f3d0; color: #065f46; }
+.report-section { margin-top: 8px; }
+.measure-layout > .card { margin-bottom: 16px; }
+.report-section > .card-head { margin-bottom: 12px; }
+
+/* 실험 및 측정: 자동/수동 */
+.mode-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+.mode-btn { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; border: 1.5px solid var(--line); border-radius: 12px; background: #fff; padding: 10px 14px; cursor: pointer; }
+.mode-btn b { font-size: 15px; }
+.mode-btn small { color: var(--muted); font-size: 12.5px; }
+.mode-btn.on { border-color: var(--primary); background: var(--primary-soft); box-shadow: 0 0 0 3px var(--primary-soft); }
+.mode-btn.on b { color: #1e3a8a; }
+.mode-btn:disabled { opacity: .55; cursor: not-allowed; }
+.measure-bar .field.mid { flex: 0 1 200px; }
+.record-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-top: 14px; padding: 12px; background: #fefce8; border: 1px solid #fde68a; border-radius: 12px; }
+.record-bar .field { flex: 1 1 260px; margin-bottom: 0; }
+.btn.record { background: #f59e0b; border-color: #f59e0b; color: #fff; }
+.btn.record:hover:not(:disabled) { background: #d97706; }
+.manual-list { margin-top: 12px; max-height: 260px; overflow: auto; }
+
+/* AI 피드백 */
+.ai-card { border-color: #c7d2fe; background: linear-gradient(180deg, #f8faff, #fff 120px); }
+.ai-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 12px 0; }
+.ai-settings { background: #f8fafc; border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin: 10px 0; }
+.ai-settings .seg { margin-bottom: 12px; }
+.ai-overall { display: flex; gap: 14px; align-items: flex-start; background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; }
+.ai-overall p { margin: 0; line-height: 1.7; }
+.ai-level { flex-shrink: 0; font-weight: 800; font-size: 14px; border-radius: 99px; padding: 4px 12px; white-space: nowrap; }
+.ai-level.sm { font-size: 12px; padding: 2px 9px; }
+.ai-level.lv4 { background: #dcfce7; color: #166534; }
+.ai-level.lv3 { background: #dbeafe; color: #1e40af; }
+.ai-level.lv2 { background: #fef9c3; color: #854d0e; }
+.ai-level.lv1 { background: #ffe4e6; color: #9f1239; }
+.ai-areas { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
+.ai-area { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; font-size: 14px; }
+.ai-area-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; }
+.ai-area p { margin: 6px 0 0; line-height: 1.6; }
+.ai-tag { display: inline-block; font-size: 11.5px; font-weight: 700; border-radius: 6px; padding: 0 6px; margin-right: 6px; }
+.ai-tag.good { background: #dcfce7; color: #166534; }
+.ai-tag.next { background: #e0e7ff; color: #3730a3; }
+.ai-next { margin-top: 12px; background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; font-size: 14px; }
+.ai-next ul { margin: 6px 0 0; padding-left: 20px; }
+.ai-teacher { margin-top: 10px; font-size: 13.5px; color: var(--ink2); }
+.ai-teacher summary { cursor: pointer; font-weight: 600; }
+.ai-meta { font-size: 12px; color: var(--muted); margin: 10px 0 0; }
+.report .ai-result .ai-overall, .report .ai-area, .report .ai-next { border-color: #e5e7eb; }
+.report .ai-areas { grid-template-columns: 1fr 1fr; }
+@media (max-width: 640px) { .mode-switch { grid-template-columns: 1fr; } .report .ai-areas { grid-template-columns: 1fr; } }
+
+/* 예상하기: 실험 전 예상 질문 */
+.exp-picker { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+.pre-lead { margin: -6px 0 16px; font-size: 14px; }
+.pre-q { margin-bottom: 22px; }
+.pre-q h4 { font-size: 15.5px; margin: 0 0 10px; color: var(--ink); }
+.t-opts { display: grid; gap: 8px; }
+.t-opt { display: flex; align-items: center; gap: 14px; text-align: left; border: 1.5px solid var(--line); border-radius: 12px; background: #fff; padding: 13px 18px; cursor: pointer; font-size: 15px; color: var(--ink2); }
+.t-opt i { width: 20px; height: 20px; border-radius: 50%; border: 2px solid #94a3b8; flex-shrink: 0; position: relative; }
+.t-opt:hover { border-color: #5eead4; }
+.t-opt.on { border-color: #0d9488; background: #f0fdfa; color: #134e4a; font-weight: 600; }
+.t-opt.on i { border-color: #0d9488; }
+.t-opt.on i::after { content: ''; position: absolute; inset: 3px; border-radius: 50%; background: #0d9488; }
+.g-opts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.g-opt { display: flex; flex-direction: column; align-items: center; gap: 6px; border: 1.5px solid var(--line); border-radius: 14px; background: #fff; padding: 14px 10px 12px; cursor: pointer; font-size: 13.5px; font-weight: 600; color: var(--ink2); }
+.g-opt:hover { border-color: #5eead4; }
+.g-opt.on { border-color: #0d9488; background: #f0fdfa; color: #134e4a; box-shadow: 0 0 0 3px #ccfbf1; }
+.gsvg { width: 100%; max-width: 220px; height: auto; }
+.pre-note { background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; border-radius: 12px; padding: 12px 16px; font-size: 14px; }
+.pre-recap { display: flex; gap: 10px; align-items: center; }
+.mini-g { width: 70px; flex-shrink: 0; }
+.mini-g .gsvg { max-width: 70px; }
+.src-note { margin-top: 10px; }
+.dyn-row textarea.auto { width: 100%; resize: none; overflow: hidden; min-height: 40px; line-height: 1.5; padding: 8px 12px; }
+.report ul { margin: 4px 0; padding-left: 22px; }
+.r-var th small { font-weight: 400; color: #6b7280; }
+@media (max-width: 640px) { .g-opts { grid-template-columns: 1fr 1fr; } }
+
 /* 차시 선택 */
 .lessons { display: grid; gap: 6px; }
 .lesson-btn { display: grid; grid-template-columns: 44px 1fr auto; align-items: center; gap: 10px; text-align: left; border: 1.5px solid var(--line); border-radius: 12px; background: #fff; padding: 8px 12px 8px 8px; cursor: pointer; }
 .lesson-btn:hover { border-color: #93c5fd; background: #fafcff; }
 .lesson-btn.on { border-color: var(--primary); background: var(--primary-soft); }
+.lesson-btn.sensor:not(.on) { border-color: #99f6e4; }
 .les-no { display: flex; flex-direction: column; align-items: center; line-height: 1.1; font-weight: 800; font-size: 16px; color: var(--ink2); background: #f1f5f9; border-radius: 8px; padding: 4px 0; }
 .les-no small { font-size: 10px; font-weight: 600; }
 .lesson-btn.on .les-no { background: var(--primary); color: #fff; }

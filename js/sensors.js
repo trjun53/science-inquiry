@@ -299,7 +299,7 @@ class GenericBleDriver extends BaseDriver {
     const extra = (this.config.extraServices || '').split(/[\s,]+/).filter(Boolean);
     const optionalServices = [...new Set([...preset.services, ...COMMON_SERVICES, ...extra].map(u => this._uuid(u)))];
     const prefixes = (this.config.namePrefixes || []).filter(Boolean);
-    const opts = prefixes.length && !this.config.showAll
+    let opts = prefixes.length && !this.config.showAll
       ? { filters: prefixes.map(p => ({ namePrefix: p })), optionalServices }
       : { acceptAllDevices: true, optionalServices };
 
@@ -477,7 +477,7 @@ const SIM_MODELS = {
   voltage: (t, k) => 1.5 * k - 0.004 * t,
   current: (t, k) => 0.12 * k - 0.0005 * t,
   force: t => 2.0 + 1.5 * Math.sin(t / 3) * Math.exp(-t / 40),
-  motion: t => 0.2 + 0.5 * 0.08 * t * t,
+  motion: t => 0.2 + 0.25 * t,
   accel: t => 0.8 + 0.05 * Math.sin(t),
   ph: t => 2 + 10 / (1 + Math.exp(-(t - 60) / 6)),
   co2: t => 1200 - 600 * (1 - Math.exp(-t / 120)),
@@ -488,6 +488,7 @@ const SIM_MODELS = {
   humidity: t => 45 + 25 * (1 - Math.exp(-t / 100)),
   magnetic: t => 5 / Math.pow(1 + 0.05 * t, 3),
   conductivity: t => 50 + 40 * t,
+  heartrate: (t, k) => (k % 2 === 1 ? 76 + 2 * Math.sin(t / 3) : 78 + 50 * Math.exp(-t / 45)),
 };
 
 class SimulationDriver extends BaseDriver {
@@ -514,7 +515,7 @@ class SimulationDriver extends BaseDriver {
     // 측정할 때마다 조건이 달라진 것처럼 변화율·크기에 차이를 줌
     this.runNo = (this.runNo || 0) + 1;
     const k = this.runNo;
-    const rate = 1.4 / (0.6 + 0.4 * k);
+    const rate = (0.6 + 0.4 * k) / 1.4; // 뒤 조건일수록 변화가 크게(예: 느린→빠른 자동차, 전지 1개→2개)
     const scale = Math.abs(f(0, k)) || 1;
     let n = 0;
     this.measuring = true;
