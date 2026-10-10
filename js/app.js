@@ -44,6 +44,7 @@ const newState = () => ({
   question: { observation: '', pre: {}, preReason: '', qIv: '', qDv: '', question: '', hypothesis: '', checks: {} },
   design: { iv: '', ivLevels: '', dv: '', sensor: '', controls: [''], materials: '', procedure: [''], intervalSec: 1, durationSec: 60, measureMode: 'auto', manualX: '', safety: {}, safetyItems: [], safetyNote: '', appliedExp: '' },
   data: { runs: [] },
+  chat: [],
   result: { channel: '', hidden: {}, analysis: '', verdict: '', conclusion: '', error: '', reflection: '', ai: null },
 });
 
@@ -55,7 +56,12 @@ let driver = null;
 function load() {
   try {
     const s = JSON.parse(localStorage.getItem(STORE_KEY));
-    if (s && s.meta) return deepMerge(newState(), s);
+    if (s && s.meta) {
+      const st = deepMerge(newState(), s);
+      // 예전에 줄바꿈으로 저장된 준비물은 쉼표로 이어 붙임
+      if (st.design.materials) st.design.materials = st.design.materials.split(/\s*\n+\s*/).filter(Boolean).join(', ');
+      return st;
+    }
   } catch (e) { /* ignore */ }
   return newState();
 }
@@ -129,6 +135,8 @@ function render() {
   view.innerHTML = ({ setup: viewSetup, predict: viewQuestion, design: viewDesign, connect: viewConnect, measure: viewMeasure, analysis: viewAnalysis, conclusion: viewConclusion, report: viewReportPage })[step]();
   view.dataset.step = step;
   $('#stepper').hidden = state.step === 0;
+  $('#topActions').hidden = state.step === 0; // 첫 화면에서는 불러오기·파일 저장·새 보고서 숨김
+  renderChat();
   renderNav();
   afterRender(step);
   window.scrollTo({ top: 0 });
@@ -281,7 +289,7 @@ function applyExperiment(id, quiet) {
   const d = state.design;
   Object.assign(d, {
     iv: e.iv, ivLevels: e.levels, dv: e.dv, sensor: e.sensors[0],
-    controls: e.controls.slice(), materials: e.materials.join('\n'), procedure: e.steps.slice(),
+    controls: e.controls.slice(), materials: e.materials.join(', '), procedure: e.steps.slice(),
     safetyItems: e.safety.slice(), safety: {}, intervalSec: e.interval, durationSec: e.duration, appliedExp: e.id,
   });
   // 탐구 질문은 학생이 직접 쓰도록 비워 둠
@@ -871,6 +879,72 @@ function drawResult(sel) {
   drawPlot(c, series, { xLabel: ax.label, xMinZero: !ax.manual, yLabel: `${n}${u ? ` (${u})` : ''}` });
 }
 
+/* ───────── 탐구 도우미 챗봇 ───────── */
+const CHAT_STEPS = ['measure', 'analysis'];
+const CHAT_SUGGEST = {
+  measure: ['센서 값이 이상하게 나와요', '측정 간격은 어떻게 정해요?', '다른 탐구도 해 보고 싶어요'],
+  analysis: ['그래프에서 무엇을 봐야 해요?', '평균 변화율이 뭐예요?', '예상과 결과가 달라요', '다른 탐구도 해 보고 싶어요'],
+};
+const chatVisible = () => CHAT_STEPS.includes(STEPS[state.step].key);
+if (ui.chatOpen === undefined) ui.chatOpen = window.innerWidth >= 1100;
+
+function renderChat() {
+  const panel = $('#chatPanel'), fab = $('#chatFab');
+  const show = chatVisible();
+  panel.hidden = !show || !ui.chatOpen;
+  fab.hidden = !show || ui.chatOpen;
+  document.body.classList.toggle('with-chat', show && ui.chatOpen);
+  if (!show || !ui.chatOpen) return;
+  const ready = aiReady();
+  const used = state.chat.filter(c => c.role === 'user').length;
+  panel.innerHTML = `
+    <div class="chat-head"><b>💬 탐구 도우미</b><button class="icon-btn" data-action="chatToggle" title="닫기">✕</button></div>
+    <div class="chat-body" id="chatBody">
+      <div class="chat-msg bot">실험하다가 궁금한 점을 물어보세요. 답을 바로 알려 주기보다 스스로 생각할 수 있게 도와줄게요.</div>
+      ${state.chat.map(c => `<div class="chat-msg ${c.role === 'user' ? 'me' : 'bot'} ${c.error ? 'err' : ''}">${chatText(c.text)}</div>`).join('')}
+      ${ui.chatBusy ? `<div class="chat-msg bot" id="chatLive">${ui.chatLive ? chatText(ui.chatLive) : '<span class="typing">생각하는 중…</span>'}</div>` : ''}
+    </div>
+    <div class="chat-suggest">${(CHAT_SUGGEST[STEPS[state.step].key] || []).map(s => `<button class="chip-btn sm" data-action="chatSuggest" data-value="${esc(s)}" ${!ready || ui.chatBusy ? 'disabled' : ''}>${esc(s)}</button>`).join('')}</div>
+    ${ready ? '' : '<p class="chat-note warn">선생님이 AI 설정을 마치면 사용할 수 있어요.</p>'}
+    <div class="chat-input">
+      <textarea id="chatInput" rows="2" maxlength="${CHAT_MAX_INPUT}" placeholder="궁금한 점을 써 보세요 (Enter로 보내기)" ${!ready || ui.chatBusy ? 'disabled' : ''}>${esc(ui.chatDraft || '')}</textarea>
+      <button class="btn primary" data-action="chatSend" ${!ready || ui.chatBusy ? 'disabled' : ''}>보내기</button>
+    </div>
+    <p class="chat-note">AI는 틀릴 수 있어요. 위험한 실험은 꼭 선생님과 함께 해요. 이름 같은 개인정보는 쓰지 마세요. (${used}/${CHAT_MAX_PER_REPORT})
+      ${state.chat.length ? '<button class="link-btn" data-action="chatClear">대화 지우기</button>' : ''}</p>`;
+  const body = $('#chatBody'); body.scrollTop = body.scrollHeight;
+}
+
+async function chatSend(text) {
+  const q = String(text || '').trim().slice(0, CHAT_MAX_INPUT);
+  if (!q || ui.chatBusy) return;
+  if (!aiReady()) return toast('선생님이 AI 설정을 마치면 사용할 수 있어요.', 'warn');
+  if (state.chat.filter(c => c.role === 'user').length >= CHAT_MAX_PER_REPORT) return toast('이 보고서에서 물어볼 수 있는 횟수를 다 썼어요. 선생님께 여쭤보세요.', 'warn');
+  if (Date.now() - (ui.chatLastAt || 0) < CHAT_COOLDOWN_MS) return toast('조금만 기다렸다가 다시 물어보세요.', 'warn');
+  // 전화번호·주민등록번호처럼 보이는 개인정보는 보내지 않음
+  if (/01[016789][-\s]?\d{3,4}[-\s]?\d{4}|\d{6}[-\s]?[1-4]\d{6}/.test(q)) return toast('전화번호 같은 개인정보는 쓰지 않아요.', 'warn');
+  ui.chatLastAt = Date.now();
+  const userMsg = { role: 'user', text: q };
+  state.chat.push(userMsg);
+  ui.chatDraft = ''; ui.chatBusy = true; ui.chatLive = '';
+  renderChat();
+  try {
+    const res = await sendChatMessage(q, delta => {
+      ui.chatLive += delta;
+      const live = $('#chatLive');
+      if (live) { live.innerHTML = chatText(ui.chatLive); const b = $('#chatBody'); b.scrollTop = b.scrollHeight; }
+    });
+    state.chat.push({ role: 'assistant', text: res.text || '답을 만들지 못했어요. 다시 물어봐 주세요.' });
+  } catch (e) {
+    userMsg.error = true; // 실패한 질문은 다음 대화 맥락에서 뺌
+    state.chat.push({ role: 'assistant', text: e.message, error: true });
+  }
+  ui.chatBusy = false; ui.chatLive = '';
+  save();
+  renderChat();
+  const input = $('#chatInput'); if (input) input.focus();
+}
+
 /* ───────── 측정 ───────── */
 const activeRun = () => state.data.runs.find(r => r.id === ui.activeRunId);
 
@@ -1170,6 +1244,11 @@ function importCsv(text, filename) {
 /* ───────── 이벤트 ───────── */
 const actions = {
   goto: el => { state.step = Number(el.dataset.step); save(); render(); },
+  home: () => { state.step = 0; save(); render(); },
+  chatToggle: () => { ui.chatOpen = !ui.chatOpen; renderChat(); if (ui.chatOpen) { const i = $('#chatInput'); if (i && !i.disabled) i.focus(); } },
+  chatSend: () => { const i = $('#chatInput'); chatSend(i ? i.value : ''); },
+  chatSuggest: el => chatSend(el.dataset.value),
+  chatClear: () => { if (!confirm('탐구 도우미와 나눈 대화를 지울까요?')) return; state.chat = []; save(); renderChat(); },
   prev: () => { state.step = Math.max(0, state.step - 1); save(); render(); },
   next: () => {
     if (state.step === 0 && !unitName()) return toast('학교급·학년·학기·단원을 선택하세요.', 'warn');
@@ -1421,6 +1500,7 @@ document.addEventListener('input', e => {
   if (el.matches('[data-bind]') && el.type !== 'checkbox' && el.type !== 'radio') onBind(el);
   if (el.matches('textarea.auto')) autosize(el);
   if (el.id === 'runLabel') ui.runLabel = el.value;
+  if (el.id === 'chatInput') ui.chatDraft = el.value;
   if (el.matches('[data-run]')) {
     const run = state.data.runs.find(r => r.id === el.dataset.run);
     if (run) { run.label = el.value; save(); }
@@ -1430,6 +1510,8 @@ document.addEventListener('input', e => {
 // 수동 기록: 메모 칸에서 Enter를 누르면 [값 기록]
 document.addEventListener('keydown', e => {
   if (e.key === 'Enter' && e.target.id === 'recX' && !e.isComposing) { e.preventDefault(); recordValue(); }
+  // 탐구 도우미: Enter로 보내기, Shift+Enter는 줄바꿈
+  if (e.key === 'Enter' && !e.shiftKey && e.target.id === 'chatInput' && !e.isComposing) { e.preventDefault(); chatSend(e.target.value); }
 });
 
 document.addEventListener('toggle', e => {

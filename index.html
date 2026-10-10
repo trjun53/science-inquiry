@@ -13,10 +13,10 @@
 <body>
   <header class="topbar no-print">
     <div class="brandmark">
-      <svg viewBox="0 0 32 32" width="30" height="30" aria-hidden="true"><rect width="32" height="32" rx="9" fill="#2563eb"/><path d="M6 21 L11 14 L15 18 L20 9 L26 16" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="20" cy="9" r="2.2" fill="#fde68a"/></svg>
-      <div><strong>디지털 센서 기반 과학 탐구</strong><span id="context" class="context"></span></div>
+      <button class="home-btn" data-action="home" title="처음 화면(수업 선택)으로 가기" aria-label="처음 화면으로 가기"><svg viewBox="0 0 32 32" width="30" height="30" aria-hidden="true"><rect width="32" height="32" rx="9" fill="#2563eb"/><path d="M6 21 L11 14 L15 18 L20 9 L26 16" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="20" cy="9" r="2.2" fill="#fde68a"/></svg>
+      <span class="home-text"><strong>디지털 센서 기반 과학 탐구</strong><span id="context" class="context"></span></span></button>
     </div>
-    <div class="top-actions">
+    <div class="top-actions" id="topActions">
       <button class="btn small ghost" data-action="loadJson">불러오기</button>
       <button class="btn small ghost" data-action="saveJson">파일 저장</button>
       <button class="btn small ghost" data-action="reset">새 보고서</button>
@@ -26,6 +26,8 @@
   <nav id="stepper" class="stepper no-print"></nav>
   <main id="view"></main>
   <footer id="nav" class="bottom-nav no-print"></footer>
+  <aside id="chatPanel" class="chat-panel no-print" hidden></aside>
+  <button id="chatFab" class="chat-fab no-print" data-action="chatToggle" hidden>💬 탐구 도우미</button>
 
   <script src="js/standards.js"></script>
   <script src="js/textbooks.js"></script>
