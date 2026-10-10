@@ -879,6 +879,52 @@ function drawResult(sel) {
   drawPlot(c, series, { xLabel: ax.label, xMinZero: !ax.manual, yLabel: `${n}${u ? ` (${u})` : ''}` });
 }
 
+/* ───────── 필수 점검: 좋은 탐구 질문(1단계), 안전 점검(2단계) ───────── */
+function uncheckedItems(stepKey) {
+  if (stepKey === 'predict') return QUESTION_CHECKS.filter(([k]) => !state.question.checks[k]).map(([, t]) => t);
+  if (stepKey === 'design') return safetyList().filter((_, i) => !state.design.safety['s' + i]);
+  return [];
+}
+// 목표 단계로 가기 전에 지나야 하는 점검이 남아 있으면 알림을 띄우고 true
+function blockedBefore(to) {
+  for (const key of ['predict', 'design']) {
+    if (to <= STEP[key]) continue;
+    const left = uncheckedItems(key);
+    if (!left.length) continue;
+    if (state.step !== STEP[key]) { state.step = STEP[key]; save(); render(); }
+    showNotice(key, left);
+    return true;
+  }
+  return false;
+}
+function showNotice(key, items) {
+  const title = key === 'predict' ? '좋은 탐구 질문인지 점검해 주세요' : '안전 점검을 모두 확인해 주세요';
+  const lead = key === 'predict'
+    ? '다음 단계로 가기 전에 내 탐구 질문이 아래 내용을 만족하는지 확인하고, 오른쪽 <b>좋은 탐구 질문 점검</b>에 체크하세요.'
+    : '실험을 시작하기 전에 아래 안전 수칙을 하나씩 읽고, <b>안전 점검</b>에 모두 체크하세요.';
+  const old = $('#noticeModal'); if (old) old.remove();
+  document.body.insertAdjacentHTML('beforeend', `
+    <div class="modal-back" id="noticeModal" role="alertdialog" aria-modal="true" aria-labelledby="noticeTitle">
+      <div class="modal ${key === 'design' ? 'safety' : ''}">
+        <h3 id="noticeTitle">${key === 'design' ? '⚠️ ' : '✔️ '}${title}</h3>
+        <p>${lead}</p>
+        <p class="muted small">아직 체크하지 않은 항목 ${items.length}개</p>
+        <ul>${items.map(t => `<li>${esc(t)}</li>`).join('')}</ul>
+        <div class="row-end"><button class="btn primary" data-action="closeNotice">확인하러 가기</button></div>
+      </div>
+    </div>`);
+  ui.flashKey = key;
+  $('#noticeModal .btn').focus();
+}
+function flashChecklist() {
+  const box = ui.flashKey === 'design' ? $('[data-bind^="design.safety.s"]') : $('[data-bind^="question.checks."]');
+  const list = box && box.closest('.checklist');
+  if (!list) return;
+  list.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  list.querySelectorAll('input[type=checkbox]').forEach(cb => cb.closest('.check').classList.toggle('need', !cb.checked));
+  list.classList.remove('flash'); void list.offsetWidth; list.classList.add('flash');
+}
+
 /* ───────── 탐구 도우미 챗봇 ───────── */
 const CHAT_STEPS = ['measure', 'analysis'];
 const CHAT_SUGGEST = {
@@ -1243,7 +1289,12 @@ function importCsv(text, filename) {
 
 /* ───────── 이벤트 ───────── */
 const actions = {
-  goto: el => { state.step = Number(el.dataset.step); save(); render(); },
+  goto: el => {
+    const to = Number(el.dataset.step);
+    if (to > state.step && blockedBefore(to)) return;
+    state.step = to; save(); render();
+  },
+  closeNotice: () => { const n = $('#noticeModal'); if (n) n.remove(); flashChecklist(); },
   home: () => { state.step = 0; save(); render(); },
   chatToggle: () => { ui.chatOpen = !ui.chatOpen; renderChat(); if (ui.chatOpen) { const i = $('#chatInput'); if (i && !i.disabled) i.focus(); } },
   chatSend: () => { const i = $('#chatInput'); chatSend(i ? i.value : ''); },
@@ -1252,6 +1303,7 @@ const actions = {
   prev: () => { state.step = Math.max(0, state.step - 1); save(); render(); },
   next: () => {
     if (state.step === 0 && !unitName()) return toast('학교급·학년·학기·단원을 선택하세요.', 'warn');
+    if (blockedBefore(state.step + 1)) return;
     state.step = Math.min(STEPS.length - 1, state.step + 1); save(); render();
   },
   setLevel: el => { Object.assign(state.meta, { level: el.dataset.value, grade: '', semester: '', unit: '', std: '', group: '', ...NO_LESSON }); save(); render(); },
@@ -1493,6 +1545,7 @@ document.addEventListener('change', e => {
     });
   }
   if (el.matches('[data-bind]')) onBind(el);
+  if (el.type === 'checkbox' && el.checked) { const c = el.closest('.check'); if (c) c.classList.remove('need'); }
 });
 
 document.addEventListener('input', e => {
@@ -1509,6 +1562,7 @@ document.addEventListener('input', e => {
 
 // 수동 기록: 메모 칸에서 Enter를 누르면 [값 기록]
 document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && $('#noticeModal')) { actions.closeNotice(); return; }
   if (e.key === 'Enter' && e.target.id === 'recX' && !e.isComposing) { e.preventDefault(); recordValue(); }
   // 탐구 도우미: Enter로 보내기, Shift+Enter는 줄바꿈
   if (e.key === 'Enter' && !e.shiftKey && e.target.id === 'chatInput' && !e.isComposing) { e.preventDefault(); chatSend(e.target.value); }
