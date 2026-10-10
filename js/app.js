@@ -35,7 +35,7 @@ const QUESTION_CHECKS = [
 const today = () => new Date().toISOString().slice(0, 10);
 const newState = () => ({
   step: 0,
-  meta: { level: '', grade: '', semester: '', group: '', unit: '', customUnit: '', lesson: '', topic: '', school: '', studentId: '', name: '', team: '', date: today() },
+  meta: { level: '', grade: '', semester: '', group: '', unit: '', customUnit: '', standards: [], lessonNo: 0, lesson: '', customLesson: '', topic: '', name: '', date: today() },
   question: { observation: '', question: '', hypothesis: '', checks: {} },
   design: { iv: '', ivLevels: '', dv: '', sensor: '', controls: [''], materials: '', procedure: [''], intervalSec: 1, durationSec: 60, safety: {}, safetyNote: '' },
   data: { runs: [] },
@@ -129,7 +129,7 @@ function render() {
 
 function renderHeader() {
   const m = state.meta;
-  const ctx = unitName() ? [m.level, m.grade, m.semester, (m.group && m.group !== '과학' ? `[${m.group}] ` : '') + unitName()].filter(Boolean).join(' · ') : '수업을 선택하세요';
+  const ctx = unitName() ? [m.level, m.grade, m.semester, (m.group && m.group !== '과학' ? `[${m.group}] ` : '') + unitName(), lessonLabel()].filter(Boolean).join(' · ') : '수업을 선택하세요';
   $('#context').textContent = ctx;
 }
 
@@ -156,7 +156,17 @@ function viewSetup() {
   const sems = m.level && m.grade && CURRICULUM[m.level][m.grade] ? Object.keys(CURRICULUM[m.level][m.grade]) : [];
   const groups = sems.includes(m.semester) ? CURRICULUM[m.level][m.grade][m.semester] : [];
   const choice = (action, items, current, cls = '') => items.map(v => `<button class="chip-btn ${cls} ${v === current ? 'on' : ''}" data-action="${action}" data-value="${esc(v)}">${esc(v)}</button>`).join('');
-  const rec = unitName() ? recommendSensors(unitName()) : [];
+  const unitBtn = (g, u, i) => {
+    const name = typeof u === 'string' ? u : u.name;
+    const on = m.unit === name && m.group === g.group && !m.customUnit.trim();
+    const f = u.field && FIELDS[u.field];
+    return `<button class="unit-btn ${on ? 'on' : ''}" data-action="setUnit" data-group="${esc(g.group)}" data-value="${esc(name)}">
+      <span class="unit-no">${u.no || i + 1}</span>
+      <span class="unit-text"><span class="unit-name">${esc(name)}</span>
+      ${f ? `<span class="unit-meta"><i style="background:${f.color}"></i>${f.name} · 성취기준 ${standardsFor(u.std).length}개</span>` : ''}</span>
+    </button>`;
+  };
+  const isElem = m.level === '초등학교';
 
   return `
   <section class="hero">
@@ -172,35 +182,96 @@ function viewSetup() {
         <div class="units">
           ${m.semester ? groups.map(g => `
             ${groups.length > 1 || g.group !== '과학' ? `<div class="unit-group">${esc(g.group)}</div>` : ''}
-            ${g.units.map((u, i) => `<button class="unit-btn ${m.unit === u && m.group === g.group && !m.customUnit ? 'on' : ''}" data-action="setUnit" data-group="${esc(g.group)}" data-value="${esc(u)}"><span class="unit-no">${i + 1}</span>${esc(u)}</button>`).join('')}
+            ${g.units.map((u, i) => unitBtn(g, u, i)).join('')}
           `).join('') : '<span class="muted">학기를 먼저 선택하세요</span>'}
-          ${m.semester ? `<label class="field custom-unit"><span>목록에 없나요? 교과서 단원명 직접 입력</span><input data-bind="meta.customUnit" data-rerender-header value="${esc(m.customUnit)}" placeholder="예: 2. 전기와 자기"></label>` : ''}
+          ${m.semester ? `<label class="field custom-unit"><span>목록에 없나요? 교과서 단원명 직접 입력</span><input data-bind="meta.customUnit" value="${esc(m.customUnit)}" placeholder="예: 2. 전기와 자기"></label>` : ''}
         </div>
       </div>
-      <p class="note">※ 2022 개정 교육과정 기준 단원입니다. 검정 교과서마다 단원명·학기 배치가 다를 수 있어요.</p>
+      <div class="sel-row ${unitName() ? '' : 'disabled'}"><h3><b>5</b> 차시</h3>
+        <div id="lessonBox">${unitName() ? lessonPicker() : '<span class="muted">단원을 먼저 선택하세요</span>'}</div>
+      </div>
+      <p class="note">${isElem
+        ? '※ 2022 개정 초등 과학 성취기준(영역 1~16)을 기준으로 합니다. 교육과정 문서에는 학기 구분이 없어 학년별 앞 4개 영역을 1학기, 뒤 4개 영역을 2학기로 배치했어요. 교과서 순서가 다르면 다른 학기에서 고르거나 직접 입력하세요.'
+        : '※ 2022 개정 교육과정 기준 단원입니다. 검정 교과서마다 단원명·학기 배치가 다를 수 있어요.'}</p>
     </section>
-    <aside class="card side">
-      <h3>수업 정보</h3>
-      ${unitName() ? `<div class="picked"><div class="muted small">선택한 단원</div><strong>${esc(unitName())}</strong>
-        <div class="muted small" style="margin-top:8px">추천 센서</div><div class="tags">${rec.map(k => `<span class="tag">${SENSOR_TYPES[k].name}</span>`).join('')}</div></div>` : ''}
-      <div class="grid2">
-        ${field('차시', 'meta.lesson', { placeholder: '예: 3/8차시' })}
-        ${field('날짜', 'meta.date', { type: 'date' })}
-      </div>
-      ${field('수업 주제', 'meta.topic', { placeholder: '예: 물의 양과 온도 변화' })}
-      ${field('학교', 'meta.school', { placeholder: '○○중학교' })}
-      <div class="grid2">
-        ${field('학번', 'meta.studentId', { placeholder: '20301' })}
-        ${field('이름', 'meta.name')}
-      </div>
-      ${field('모둠(모둠원)', 'meta.team', { placeholder: '1모둠: 김○○, 이○○' })}
-    </aside>
+    <aside class="card unit-panel" id="unitPanel">${unitPanel()}</aside>
   </div>`;
+}
+
+/* 5. 차시 선택 */
+const NO_LESSON = { standards: [], lessonNo: 0, lesson: '', customLesson: '' };
+const lessonLabel = () => {
+  const m = state.meta;
+  if (m.customLesson && m.customLesson.trim()) return m.customLesson.trim();
+  return m.lesson ? `${m.lessonNo}차시 · ${m.lesson}` : '';
+};
+function lessonPicker() {
+  const m = state.meta;
+  const info = unitInfo();
+  const lessons = lessonsFor(info);
+  const custom = (m.customLesson || '').trim();
+  return `
+    <div class="lessons">${lessons.map(l => `
+      <button class="lesson-btn ${!custom && m.lesson === l.title ? 'on' : ''}" data-action="setLesson" data-no="${l.no}" data-value="${esc(l.title)}" data-std="${l.std}" data-sensor="${l.sensor}">
+        <span class="les-no">${l.no}<small>차시</small></span>
+        <span class="les-title">${esc(l.title)}</span>
+        <span class="les-tags">${l.sensor ? `<span class="les-sensor">센서 · ${SENSOR_TYPES[l.sensor].name}</span>` : ''}${l.std ? `<span class="les-std">${l.std}</span>` : ''}</span>
+      </button>`).join('')}</div>
+    <p class="muted small les-help">${info ? `성취기준을 바탕으로 구성한 ${lessons.length}차시 예시입니다. <b class="les-sensor-inline">센서</b> 표시가 있는 차시는 디지털 센서 탐구에 알맞아요. 차시를 고르면 관련 성취기준도 함께 체크돼요.` : '성취기준 자료가 없는 단원이라 디지털 센서 탐구 수업의 기본 차시 구성을 보여 줘요.'}</p>
+    <label class="field custom-unit"><span>교과서 차시명이 다르면 직접 입력</span><input data-bind="meta.customLesson" value="${esc(m.customLesson || '')}" placeholder="예: 5/9차시 전자석의 세기 비교하기"></label>`;
+}
+
+/* 첫 화면 오른쪽: 선택한 단원 정보 */
+const unitInfo = () => (state.meta.customUnit.trim() ? null : elemUnitInfo(state.meta.level, state.meta.unit));
+const recSensors = () => recommendSensors(unitName(), state.meta.level);
+function exampleQuestions() {
+  const info = unitInfo();
+  if (info) return info.examples.map(q => ({ q, sensor: info.sensors[0] || '' }));
+  return recSensors().map(k => ({ q: EXAMPLE_QUESTIONS[k], sensor: k }));
+}
+function unitPanel() {
+  const m = state.meta;
+  if (!unitName()) {
+    return `<h3>단원 정보</h3>
+      <ol class="guide-steps">
+        <li><b>학교급</b>과 <b>학년</b>을 고르세요.</li>
+        <li><b>학기</b>를 고르면 그 학기 단원이 나타나요.</li>
+        <li><b>단원</b>을 고르면 성취기준, 추천 센서, 센서 탐구 예시가 여기에 표시돼요.</li>
+      </ol>`;
+  }
+  const info = unitInfo();
+  const f = info && FIELDS[info.field];
+  const rec = recSensors();
+  const stds = info ? standardsFor(info.std) : [];
+  const picked = m.standards || [];
+  const examples = exampleQuestions();
+  return `
+    <div class="up-head">
+      <div class="muted small">${esc([m.level, m.grade, m.semester].filter(Boolean).join(' · '))}</div>
+      <h3>${info ? `<span class="up-no">${info.no}</span>` : ''}${esc(unitName())}</h3>
+      ${f ? `<span class="field-chip" style="--c:${f.color}">${f.name}</span>` : ''}
+    </div>
+    ${stds.length ? `
+      <div class="up-sec"><div class="up-label">성취기준 <small>이번 차시에 해당하는 것을 골라요 (보고서에 들어가요)</small></div>
+        <div class="std-list">${stds.map(s => `
+          <div class="std ${picked.includes(s.code) ? 'on' : ''}">
+            <label><input type="checkbox" data-action="toggleStd" value="${s.code}" ${picked.includes(s.code) ? 'checked' : ''}>
+            <span><span class="std-code">[${s.code}]</span> ${esc(s.text)}</span></label>
+            ${s.note ? `<details class="std-note"><summary>해설</summary>${esc(s.note)}</details>` : ''}
+          </div>`).join('')}</div>
+      </div>` : `<p class="note">${info ? '' : '중·고등학교와 직접 입력한 단원은 성취기준 자료가 없어 단원명만 사용합니다.'}</p>`}
+    <div class="up-sec"><div class="up-label">추천 센서</div>
+      ${rec.length ? `<div class="tags">${rec.map(k => `<span class="tag">${SENSOR_TYPES[k].name} <em>${SENSOR_TYPES[k].unit}</em></span>`).join('')}</div>`
+        : '<p class="muted small">관찰·모형·조사 중심 단원이에요. 센서 탐구를 하려면 실험 설계에서 센서를 직접 골라 주세요.</p>'}
+    </div>
+    ${examples.length ? `<div class="up-sec"><div class="up-label">센서 탐구 예시 <small>누르면 탐구 질문으로 시작해요</small></div>
+      <div class="examples">${examples.map(e => `<button class="example" data-action="startWithExample" data-value="${esc(e.q)}" data-sensor="${e.sensor}">${esc(e.q)}</button>`).join('')}</div></div>` : ''}`;
 }
 
 /* 1. 탐구 질문 */
 function viewQuestion() {
-  const rec = recommendSensors(unitName());
+  const examples = exampleQuestions();
+  const stds = (state.meta.standards || []).map(findStandard).filter(Boolean);
   const d = state.design;
   return `
   <section class="page-head"><h2>탐구 질문 세우기</h2><p>관찰한 현상에서 궁금한 점을 찾고, 실험으로 확인할 수 있는 질문과 가설을 세워요.</p></section>
@@ -220,8 +291,8 @@ function viewQuestion() {
           <button class="btn small" data-action="buildQuestion">문장 만들기</button>
         </div>
         ${field('나의 탐구 질문', 'question.question', { textarea: true, rows: 2, placeholder: '예: 물의 양에 따라 같은 시간 동안 가열한 물의 온도 변화는 어떻게 달라질까?' })}
-        <div class="muted small">이 단원의 예시 질문 (누르면 입력됩니다)</div>
-        <div class="examples">${rec.map(k => `<button class="example" data-action="useExample" data-value="${esc(EXAMPLE_QUESTIONS[k])}" data-sensor="${k}"><span class="tag">${SENSOR_TYPES[k].name}</span>${esc(EXAMPLE_QUESTIONS[k])}</button>`).join('')}</div>
+        ${examples.length ? `<div class="muted small">이 단원의 센서 탐구 예시 (누르면 입력됩니다)</div>
+        <div class="examples">${examples.map(e => `<button class="example" data-action="useExample" data-value="${esc(e.q)}" data-sensor="${e.sensor}">${e.sensor ? `<span class="tag">${SENSOR_TYPES[e.sensor].name}</span>` : ''}${esc(e.q)}</button>`).join('')}</div>` : ''}
       </section>
       <section class="card">
         <h3>③ 가설 세우기</h3>
@@ -229,6 +300,7 @@ function viewQuestion() {
       </section>
     </div>
     <aside class="card side">
+      ${stds.length ? `<h3>이번 차시 성취기준</h3><div class="std-mini">${stds.map(s => `<p><b>[${s.code}]</b> ${esc(s.text)}</p>`).join('')}</div>` : ''}
       <h3>좋은 탐구 질문 점검</h3>
       <div class="checklist">${QUESTION_CHECKS.map(([k, t]) => `<label class="check"><input type="checkbox" data-bind="question.checks.${k}" ${state.question.checks[k] ? 'checked' : ''}><span>${t}</span></label>`).join('')}</div>
       <div class="tipbox"><strong>도움말</strong><p>“왜?”로 묻는 질문보다 “~에 따라 ~은 어떻게 달라질까?”처럼 <b>측정할 수 있는</b> 질문이 탐구하기 좋아요.</p></div>
@@ -239,8 +311,8 @@ function viewQuestion() {
 /* 2. 실험 설계 */
 function viewDesign() {
   const d = state.design;
-  const rec = recommendSensors(unitName());
-  const keys = [...rec, ...Object.keys(SENSOR_TYPES).filter(k => !rec.includes(k))];
+  const rec = recSensors();
+  const keys =[...rec, ...Object.keys(SENSOR_TYPES).filter(k => !rec.includes(k))];
   const list = (arrPath, placeholder, numbered) => {
     const arr = getPath(state, arrPath);
     return `<div class="dyn-list">${arr.map((v, i) => `
@@ -526,6 +598,8 @@ function chartImage(key, w = 760, h = 340) {
 }
 function viewReport() {
   const m = state.meta, q = state.question, d = state.design, r = state.result;
+  const info = unitInfo();
+  const stds = info ? (m.standards || []).map(findStandard).filter(Boolean) : [];
   const keys = channelKeys();
   const safety = SAFETY_ITEMS.filter((_, i) => d.safety['s' + i]);
   const devices = [...new Set(state.data.runs.map(x => x.device || x.brand))];
@@ -542,10 +616,10 @@ function viewReport() {
       <div class="r-kicker">디지털 센서 활용 과학 탐구 보고서</div>
       <h1>${esc(m.topic || q.question || unitName() || '과학 탐구 보고서')}</h1>
       <table class="r-info"><tbody>
-        <tr><th>학교급·학년·학기</th><td>${esc([m.level, m.grade, m.semester].filter(Boolean).join(' '))}</td><th>단원</th><td>${esc((m.group && m.group !== '과학' ? `[${m.group}] ` : '') + unitName())}</td></tr>
-        <tr><th>차시</th><td>${esc(m.lesson)}</td><th>날짜</th><td>${esc(m.date)}</td></tr>
-        <tr><th>학교</th><td>${esc(m.school)}</td><th>학번·이름</th><td>${esc([m.studentId, m.name].filter(Boolean).join(' '))}</td></tr>
-        <tr><th>모둠</th><td colspan="3">${esc(m.team)}</td></tr>
+        <tr><th>학교급·학년·학기</th><td>${esc([m.level, m.grade, m.semester].filter(Boolean).join(' '))}</td><th>날짜</th><td>${esc(m.date)}</td></tr>
+        <tr><th>단원</th><td colspan="3">${info ? `(${info.no}) ` : ''}${esc((m.group && m.group !== '과학' ? `[${m.group}] ` : '') + unitName())}${info ? ` <span class="muted">· ${FIELDS[info.field].name}</span>` : ''}</td></tr>
+        ${lessonLabel() ? `<tr><th>차시</th><td colspan="3">${esc(lessonLabel())}</td></tr>` : ''}
+        ${stds.length ? `<tr><th>성취기준</th><td colspan="3">${stds.map(s => `<div>[${s.code}] ${esc(s.text)}</div>`).join('')}</td></tr>` : ''}
       </tbody></table>
     </header>
     <section><h2>1. 탐구 문제</h2>
@@ -727,7 +801,7 @@ async function connect() {
   if (driver && driver.connected) await driver.disconnect();
   let d;
   if (ui.brand === 'vernier') d = new VernierDriver();
-  else if (ui.brand === 'sim') d = new SimulationDriver(state.design.sensor || recommendSensors(unitName())[0]);
+  else if (ui.brand === 'sim') d = new SimulationDriver(state.design.sensor || recSensors()[0] || 'temp');
   else d = new GenericBleDriver(ui.brand, ui.cfg);
   if (ui.brand !== 'sim' && !('bluetooth' in navigator)) return toast('이 브라우저는 블루투스를 지원하지 않습니다. Chrome 또는 Edge를 사용하세요.', 'warn');
   ui.raw = [];
@@ -819,10 +893,40 @@ const actions = {
     if (state.step === 0 && !unitName()) return toast('학교급·학년·학기·단원을 선택하세요.', 'warn');
     state.step = Math.min(STEPS.length - 1, state.step + 1); save(); render();
   },
-  setLevel: el => { Object.assign(state.meta, { level: el.dataset.value, grade: '', semester: '', unit: '', group: '' }); save(); render(); },
-  setGrade: el => { Object.assign(state.meta, { grade: el.dataset.value, semester: '', unit: '', group: '' }); save(); render(); },
-  setSemester: el => { Object.assign(state.meta, { semester: el.dataset.value, unit: '', group: '' }); save(); render(); },
-  setUnit: el => { Object.assign(state.meta, { unit: el.dataset.value, group: el.dataset.group, customUnit: '' }); save(); render(); },
+  setLevel: el => { Object.assign(state.meta, { level: el.dataset.value, grade: '', semester: '', unit: '', group: '', ...NO_LESSON }); save(); render(); },
+  setGrade: el => { Object.assign(state.meta, { grade: el.dataset.value, semester: '', unit: '', group: '', ...NO_LESSON }); save(); render(); },
+  setSemester: el => { Object.assign(state.meta, { semester: el.dataset.value, unit: '', group: '', ...NO_LESSON }); save(); render(); },
+  setUnit: el => {
+    if (state.meta.unit !== el.dataset.value || state.meta.customUnit.trim()) Object.assign(state.meta, NO_LESSON);
+    Object.assign(state.meta, { unit: el.dataset.value, group: el.dataset.group, customUnit: '' });
+    save(); render();
+  },
+  setLesson: el => {
+    const m = state.meta;
+    Object.assign(m, { lessonNo: Number(el.dataset.no), lesson: el.dataset.value, customLesson: '' });
+    const std = el.dataset.std;
+    if (std && !(m.standards || []).includes(std)) {
+      const set = new Set([...(m.standards || []), std]);
+      m.standards = standardsFor(unitInfo().std).map(s => s.code).filter(c => set.has(c));
+    }
+    if (el.dataset.sensor && !state.design.sensor) state.design.sensor = el.dataset.sensor;
+    save();
+    $('#lessonBox').innerHTML = lessonPicker();
+    $('#unitPanel').innerHTML = unitPanel();
+    renderHeader();
+  },
+  toggleStd: el => {
+    const set = new Set(state.meta.standards || []);
+    if (el.checked) set.add(el.value); else set.delete(el.value);
+    state.meta.standards = (unitInfo() ? standardsFor(unitInfo().std) : []).map(s => s.code).filter(c => set.has(c));
+    el.closest('.std').classList.toggle('on', el.checked);
+    save();
+  },
+  startWithExample: el => {
+    state.question.question = el.dataset.value;
+    if (el.dataset.sensor) state.design.sensor = el.dataset.sensor;
+    state.step = 1; save(); render();
+  },
   buildQuestion: () => {
     const { iv, dv } = state.design;
     if (!iv || !dv) return toast('바꾸는 것과 측정하는 것을 모두 입력하세요.', 'warn');
@@ -902,7 +1006,7 @@ const actions = {
     if (driver && driver.connected) await driver.disconnect();
     const keepMeta = state.meta;
     state = newState();
-    Object.assign(state.meta, { level: keepMeta.level, grade: keepMeta.grade, semester: keepMeta.semester, school: keepMeta.school, studentId: keepMeta.studentId, name: keepMeta.name, team: keepMeta.team });
+    Object.assign(state.meta, { level: keepMeta.level, grade: keepMeta.grade, semester: keepMeta.semester });
     ui.runLabel = ''; ui.showRunId = null;
     save(true); render();
   },
@@ -933,14 +1037,14 @@ document.addEventListener('click', e => {
   const el = e.target.closest('[data-action]');
   if (!el || el.disabled) return;
   const a = el.dataset.action;
-  if (['toggleChannel', 'toggleRun', 'importCsv', 'simSensor', 'pickChannel'].includes(a)) return; // change 이벤트에서 처리
+  if (['toggleChannel', 'toggleRun', 'toggleStd', 'importCsv', 'simSensor', 'pickChannel'].includes(a)) return; // change 이벤트에서 처리
   if (actions[a]) { e.preventDefault(); actions[a](el); }
 });
 
 document.addEventListener('change', e => {
   const el = e.target;
   const a = el.dataset.action;
-  if (a === 'toggleChannel' || a === 'toggleRun' || a === 'pickChannel') return actions[a](el);
+  if (a === 'toggleChannel' || a === 'toggleRun' || a === 'toggleStd' || a === 'pickChannel') return actions[a](el);
   if (a === 'simSensor') {
     state.design.sensor = el.value; save();
     if (driver && driver.brand === 'sim') { driver.setSensor(el.value); updateLive(); }
@@ -994,7 +1098,18 @@ function onBind(el) {
   if (el.type === 'number') v = el.value === '' ? '' : Number(el.value);
   setPath(state, path, v);
   save();
-  if (path === 'meta.customUnit') { renderHeader(); renderStepper(); document.querySelectorAll('.unit-btn.on').forEach(b => b.classList.toggle('on', !v.trim())); }
+  if (path === 'meta.customUnit') {
+    if (v.trim()) Object.assign(state.meta, { standards: [], lessonNo: 0, lesson: '' });
+    renderHeader(); renderStepper();
+    if (v.trim()) document.querySelectorAll('.unit-btn.on').forEach(b => b.classList.remove('on'));
+    const p = $('#unitPanel'); if (p) p.innerHTML = unitPanel();
+    const lb = $('#lessonBox'); if (lb && !lb.contains(el)) lb.innerHTML = unitName() ? lessonPicker() : '<span class="muted">단원을 먼저 선택하세요</span>';
+    document.querySelectorAll('.sel-row').forEach((r, i) => { if (i === 4) r.classList.toggle('disabled', !unitName()); });
+  }
+  if (path === 'meta.customLesson') {
+    renderHeader();
+    if (v.trim()) document.querySelectorAll('.lesson-btn.on').forEach(b => b.classList.remove('on'));
+  }
   if (path.startsWith('design.intervalSec') || path.startsWith('design.durationSec')) {
     const n = $('#expectN'); if (n) n.textContent = expectN();
     // 측정 화면과 설계 화면의 같은 입력 동기화
