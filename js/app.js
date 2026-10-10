@@ -41,7 +41,7 @@ const newState = () => ({
   step: 0,
   meta: { level: '', grade: '', semester: '', publisher: '', std: '', group: '', unit: '', customUnit: '', standards: [], lessonNo: 0, lesson: '', customLesson: '', topic: '', name: '', date: today() },
   expId: '',
-  question: { observation: '', pre: {}, preReason: '', question: '', hypothesis: '', checks: {} },
+  question: { observation: '', pre: {}, preReason: '', qIv: '', qDv: '', question: '', hypothesis: '', checks: {} },
   design: { iv: '', ivLevels: '', dv: '', sensor: '', controls: [''], materials: '', procedure: [''], intervalSec: 1, durationSec: 60, measureMode: 'auto', manualX: '', safety: {}, safetyItems: [], safetyNote: '', appliedExp: '' },
   data: { runs: [] },
   result: { channel: '', hidden: {}, analysis: '', verdict: '', conclusion: '', error: '', reflection: '', ai: null },
@@ -284,9 +284,9 @@ function applyExperiment(id, quiet) {
     controls: e.controls.slice(), materials: e.materials.join('\n'), procedure: e.steps.slice(),
     safetyItems: e.safety.slice(), safety: {}, intervalSec: e.interval, durationSec: e.duration, appliedExp: e.id,
   });
-  state.question.question = e.question;
+  // 탐구 질문은 학생이 직접 쓰도록 비워 둠
   ui.runLabel = '';
-  if (!quiet) toast(`'${e.title}' 실험으로 탐구 질문과 실험 설계를 채웠어요.`);
+  if (!quiet) toast(`'${e.title}' 실험으로 바꿨어요. 실험 설계가 이 실험 내용으로 채워졌어요.`);
 }
 function unitPanel() {
   const m = state.meta;
@@ -369,7 +369,7 @@ function preAnswers(exp) {
 function viewQuestion() {
   const examples = exampleQuestions();
   const stds = (state.meta.standards || []).map(findStandard).filter(Boolean);
-  const d = state.design;
+  const q = state.question;
   const exp = currentExperiment();
   const exps = unitInfo() ? experimentsFor(unitInfo().std) : [];
   const expPicker = exps.length ? `
@@ -397,13 +397,13 @@ function viewQuestion() {
       <section class="card">
         <h3>② 탐구 질문 만들기</h3>
         <div class="builder">
-          <input data-bind="design.iv" value="${esc(d.iv)}" placeholder="다르게 할 것 (예: 물의 양)">
+          <input data-bind="question.qIv" value="${esc(q.qIv || '')}" placeholder="무엇을 다르게 할까요?">
           <span>에 따라</span>
-          <input data-bind="design.dv" value="${esc(d.dv)}" placeholder="측정 결과 (예: 물의 온도 변화)">
+          <input data-bind="question.qDv" value="${esc(q.qDv || '')}" placeholder="무엇을 측정할까요?">
           <span>은(는) 어떻게 달라질까?</span>
           <button class="btn small" data-action="buildQuestion">문장 만들기</button>
         </div>
-        ${field('나의 탐구 질문', 'question.question', { textarea: true, rows: 2, placeholder: '예: 물의 양에 따라 같은 시간 동안 가열한 물의 온도 변화는 어떻게 달라질까?' })}
+        ${field('나의 탐구 질문', 'question.question', { textarea: true, rows: 2, placeholder: '빈칸을 채워 [문장 만들기]를 누르거나, 직접 써 보세요.' })}
         ${examples.length && !exp ? `<div class="muted small">이 단원의 센서 탐구 예시 (누르면 입력됩니다)</div>
         <div class="examples">${examples.map(e => `<button class="example" data-action="useExample" data-value="${esc(e.q)}" data-sensor="${e.sensor}" data-exp="${e.exp}">${e.sensor ? `<span class="tag">${SENSOR_TYPES[e.sensor].name}</span>` : ''}${esc(e.q)}</button>`).join('')}</div>` : ''}
       </section>
@@ -582,7 +582,11 @@ function brandPanel() {
       ${ui.csvMsg ? `<p class="small">${esc(ui.csvMsg)}</p>` : ''}`;
   }
   const connected = driver && driver.connected && driver.brand === ui.brand;
-  const simSel = ui.brand === 'sim' ? `
+  const simExp = ui.brand === 'sim' && currentExperiment() && typeof EXP_SIM !== 'undefined' && EXP_SIM[currentExperiment().id] ? currentExperiment() : null;
+  const simSel = simExp ? `
+    <div class="tipbox" style="margin:0 0 12px"><strong>‘${esc(simExp.title)}’ 실험용 가상 데이터</strong>
+      <p>측정 조건 이름을 실험 설계의 조건(${esc(simExp.levels)})으로 고르면, 그 조건에서 실제로 나올 법한 값이 나와요.</p></div>`
+    : ui.brand === 'sim' ? `
     <label class="field"><span>가상 센서 종류</span><select data-action="simSensor">
       ${Object.keys(SENSOR_TYPES).map(k => `<option value="${k}" ${(state.design.sensor || 'temp') === k ? 'selected' : ''}>${SENSOR_TYPES[k].name}</option>`).join('')}
     </select></label>` : '';
@@ -969,6 +973,9 @@ function updateMeasureButtons() {
 
 async function startMeasure() {
   if (!driver || !driver.connected) return toast('먼저 센서를 연결하세요.', 'warn');
+  const label0 = ($('#runLabel').value || '').trim();
+  if (label0) ui.runLabel = label0;
+  applySimExperiment(driver); // 실험을 바꿨을 수도 있으니 측정 직전에 다시 맞춤
   const chans = driver.channels.filter(c => c.enabled);
   if (!chans.length && driver.brand === 'vernier') return toast('측정할 채널을 선택하세요.', 'warn');
   const label = ($('#runLabel').value || '').trim() || `시행 ${state.data.runs.length + 1}`;
@@ -1050,6 +1057,24 @@ function finishRun() {
   save(true);
 }
 
+// 가상 센서용: 지금 측정 조건이 '다르게 할 조건' 중 몇 번째인지(k), 수동 기록의 가로축 값(x)
+function simContext() {
+  const run = activeRun();
+  const label = String(run ? run.label : ui.runLabel || '').replace(/\s/g, '');
+  let k = ivLevels().findIndex(l => l.replace(/\s/g, '') === label);
+  if (k < 0) k = run ? Math.max(0, state.data.runs.indexOf(run)) : state.data.runs.length;
+  const xi = $('#recX');
+  const x = xi && xi.value.trim() !== '' && !isNaN(Number(xi.value)) ? Number(xi.value) : null;
+  return { k, x };
+}
+function applySimExperiment(d) {
+  if (!d || d.brand !== 'sim') return false;
+  const exp = currentExperiment();
+  if (exp && d.useExperiment(exp, simContext)) return true;
+  if (d.exp) d.setSensor(state.design.sensor || recSensors()[0] || 'temp');
+  return false;
+}
+
 async function connect() {
   if (driver && driver.connected) await driver.disconnect();
   let d;
@@ -1059,6 +1084,7 @@ async function connect() {
   if (ui.brand !== 'sim' && !('bluetooth' in navigator)) return toast('이 브라우저는 블루투스를 지원하지 않습니다. Chrome 또는 Edge를 사용하세요.', 'warn');
   ui.raw = [];
   attachDriver(d);
+  applySimExperiment(d);
   try {
     await d.connect();
     toast(`${d.deviceName} 연결 완료`);
@@ -1243,8 +1269,8 @@ const actions = {
     el.closest('.pre-q').querySelectorAll('[data-action="pickPre"]').forEach(b => b.classList.toggle('on', b === el));
   },
   buildQuestion: () => {
-    const { iv, dv } = state.design;
-    if (!iv || !dv) return toast('바꾸는 것과 측정하는 것을 모두 입력하세요.', 'warn');
+    const iv = (state.question.qIv || '').trim(), dv = (state.question.qDv || '').trim();
+    if (!iv || !dv) return toast('다르게 할 것과 측정할 것을 모두 입력하세요.', 'warn');
     state.question.question = `${iv}에 따라 ${dv}은(는) 어떻게 달라질까?`;
     save(); render();
   },

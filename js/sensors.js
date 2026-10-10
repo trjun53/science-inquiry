@@ -498,10 +498,20 @@ class SimulationDriver extends BaseDriver {
     this.setSensor(sensorKey);
   }
   setSensor(key) {
+    this.exp = null;
     this.sensorKey = SENSOR_TYPES[key] ? key : 'temp';
     const s = SENSOR_TYPES[this.sensorKey];
     this.channels = [{ id: 0, name: s.name, unit: s.unit, enabled: true }];
     this.emit('channels', this.channels);
+  }
+  // 실험 템플릿에 맞춘 예시 데이터 사용 (ctxFn: 조건 번호 k, 수동 기록 값 x를 알려 주는 함수)
+  useExperiment(exp, ctxFn) {
+    if (!exp || typeof EXP_SIM === 'undefined' || !EXP_SIM[exp.id]) return false;
+    this.exp = exp;
+    this.ctxFn = ctxFn;
+    this.channels = simChannels(exp).map(([key, name], i) => ({ id: i, name, unit: SENSOR_TYPES[key].unit, enabled: true }));
+    this.emit('channels', this.channels);
+    return true;
   }
   async connect() {
     await sleep(500);
@@ -511,6 +521,7 @@ class SimulationDriver extends BaseDriver {
     this.emit('status', '가상 센서 연결됨');
   }
   async start(intervalMs) {
+    if (this.exp) return this._startExperiment(intervalMs);
     const f = SIM_MODELS[this.sensorKey];
     // 측정할 때마다 조건이 달라진 것처럼 변화율·크기에 차이를 줌
     this.runNo = (this.runNo || 0) + 1;
@@ -523,6 +534,27 @@ class SimulationDriver extends BaseDriver {
       const t = n * intervalMs / 1000;
       const y = f(t * rate, k) + (Math.random() - 0.5) * 0.01 * scale;
       this.emit('sample', { t: Math.round(t * 1000) / 1000, values: { 0: Math.round(y * 1000) / 1000 } });
+      n++;
+    }, intervalMs);
+    return intervalMs;
+  }
+  _startExperiment(intervalMs) {
+    const model = EXP_SIM[this.exp.id];
+    const ctx0 = this.ctxFn ? this.ctxFn() : {};
+    const k = ctx0.k || 0;
+    let n = 0;
+    this.measuring = true;
+    this.timer = setInterval(() => {
+      const t = n * intervalMs / 1000;
+      const live = this.ctxFn ? this.ctxFn() : {};
+      const ys = model({ t, k, x: live.x !== undefined ? live.x : null });
+      const values = {};
+      ys.forEach((y, i) => {
+        // 실제 센서처럼 아주 작은 흔들림을 더함
+        const noise = (Math.random() - 0.5) * (Math.abs(y) * 0.003 + 0.002);
+        values[i] = Math.round((y + noise) * 10000) / 10000;
+      });
+      this.emit('sample', { t: Math.round(t * 1000) / 1000, values });
       n++;
     }, intervalMs);
     return intervalMs;
