@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>디지털 탐구 보고서</title>
+  <meta name="description" content="디지털 탐구 센서(PASCO, Vernier, 사이언스큐브, 이지메이커)를 블루투스로 연결해 과학 탐구 보고서를 만드는 수업용 웹앱">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar no-print">
+    <div class="brandmark">
+      <svg viewBox="0 0 32 32" width="30" height="30" aria-hidden="true"><rect width="32" height="32" rx="9" fill="#2563eb"/><path d="M6 21 L11 14 L15 18 L20 9 L26 16" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="20" cy="9" r="2.2" fill="#fde68a"/></svg>
+      <div><strong>디지털 탐구 보고서</strong><span id="context" class="context"></span></div>
+    </div>
+    <div class="top-actions">
+      <button class="btn small ghost" data-action="loadJson">불러오기</button>
+      <button class="btn small ghost" data-action="saveJson">파일 저장</button>
+      <button class="btn small ghost" data-action="reset">새 보고서</button>
+      <input type="file" id="jsonFile" accept=".json,application/json" hidden>
+    </div>
+  </header>
+  <nav id="stepper" class="stepper no-print"></nav>
+  <main id="view"></main>
+  <footer id="nav" class="bottom-nav no-print"></footer>
+
+  <script src="js/curriculum.js"></script>
+  <script src="js/sensors.js"></script>
+  <script src="js/plot.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
