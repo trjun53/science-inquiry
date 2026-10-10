@@ -8,7 +8,7 @@ const STEPS = [
   { key: 'connect', title: '센서 연결' },
   { key: 'measure', title: '실험 및 측정' },
   { key: 'analysis', title: '데이터 분석' },
-  { key: 'conclusion', title: '결론' },
+  { key: 'conclusion', title: '결론 및 피드백' },
   { key: 'report', title: '보고서 작성' },
 ];
 const STEP = Object.fromEntries(STEPS.map((s, i) => [s.key, i]));
@@ -752,7 +752,7 @@ function viewConclusion() {
   const exp = currentExperiment();
   const answers = preAnswers(exp).filter(a => a.a);
   return `
-  <section class="page-head"><h2>결론</h2><p>측정 그래프를 다시 보며 예상이 맞았는지 판단하고, 탐구 질문에 대한 답을 써요.</p>
+  <section class="page-head"><h2>결론 및 피드백</h2><p>측정 그래프를 다시 보며 예상이 맞았는지 판단하고 탐구 질문에 대한 답을 쓴 뒤, AI 선생님의 피드백을 받아요.</p>
     ${state.question.question ? `<div class="qbanner">탐구 질문: ${esc(state.question.question)}</div>` : ''}</section>
   <section class="card">
     ${keys.length ? `
@@ -784,8 +784,7 @@ function viewConclusion() {
 /* 7. 보고서 작성 */
 function viewReportPage() {
   return `
-  <section class="page-head"><h2>보고서 작성</h2><p>지금까지의 탐구 과정이 보고서로 정리되었어요. AI 피드백을 확인하고, 인쇄하거나 PDF로 저장하세요.</p></section>
-  <div class="no-print">${aiCard('report')}</div>
+  <section class="page-head"><h2>보고서 작성</h2><p>지금까지의 탐구 과정이 보고서로 정리되었어요. [결론 및 피드백] 단계에서 받은 피드백은 보고서 마지막에 들어가요. 확인한 뒤 인쇄하거나 PDF로 저장하세요.</p></section>
   <div id="reportBox">${viewReport()}</div>`;
 }
 function chartImage(key, w = 760, h = 340) {
@@ -852,7 +851,7 @@ function viewReport() {
       <h4>오차의 원인과 개선 방법</h4><p>${blank(r.error)}</p>
       <h4>새롭게 알게 된 점 · 더 탐구하고 싶은 점</h4><p>${blank(r.reflection)}</p>
     </section>
-    ${r.ai && r.ai.data ? `<section><h2>5. AI 피드백 평가</h2>${aiFeedbackHtml(r.ai, true)}</section>` : ''}
+    <section><h2>5. 피드백</h2>${r.ai && r.ai.data ? aiFeedbackHtml(r.ai, true) : '<p><span class="blank">([결론 및 피드백] 단계에서 AI 피드백을 받지 않았어요)</span></p>'}</section>
   </article>`;
 }
 /* ───────── 렌더 후 처리 ───────── */

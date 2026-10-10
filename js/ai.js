@@ -298,7 +298,7 @@ function aiCard(where) {
   const busy = ui.aiBusy;
   return `
   <section class="card ai-card" id="aiCard">
-    <div class="card-head"><h3>${where === 'report' ? 'AI 피드백 평가' : '④ AI 선생님 피드백'}</h3>
+    <div class="card-head"><h3>④ AI 선생님 피드백</h3>
       <button class="btn small ghost" data-action="aiToggleSettings">AI 설정</button></div>
     <p class="muted small">실험 설계부터 측정, 결과, 성찰까지 보고서 전체를 교사의 관점에서 평가해 줘요. 버튼을 누르면 보고서 내용(이름 등 개인정보 제외)이 Anthropic의 Claude로 전송됩니다.</p>
     ${aiSettingsHtml()}
