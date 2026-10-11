@@ -135,7 +135,6 @@ function render() {
   view.innerHTML = ({ setup: viewSetup, predict: viewQuestion, design: viewDesign, connect: viewConnect, measure: viewMeasure, analysis: viewAnalysis, conclusion: viewConclusion, report: viewReportPage })[step]();
   view.dataset.step = step;
   $('#stepper').hidden = state.step === 0;
-  $('#topActions').hidden = state.step === 0; // 첫 화면에서는 불러오기·파일 저장·새 보고서 숨김
   renderChat();
   renderNav();
   afterRender(step);
@@ -905,6 +904,33 @@ function drawResult(sel) {
   drawPlot(c, series, { xLabel: ax.label, xMinZero: !ax.manual, yLabel: `${n}${u ? ` (${u})` : ''}` });
 }
 
+/* ───────── 다른 수업으로 바꿀 때 이전 탐구 지우기 ───────── */
+// 학생이 직접 쓰거나 측정한 내용이 하나라도 있는지 (실험 템플릿으로 자동 채운 설계는 제외)
+function hasInquiryContent() {
+  const q = state.question, r = state.result;
+  const filled = v => v && String(v).trim();
+  return !!(filled(q.question) || filled(q.hypothesis) || filled(q.preReason) || filled(q.observation) || filled(q.qIv) || filled(q.qDv)
+    || Object.values(q.pre || {}).some(a => a && Object.keys(a).length)
+    || Object.values(q.checks || {}).some(Boolean) || Object.values(state.design.safety || {}).some(Boolean)
+    || state.data.runs.length || (state.data.observe && state.data.observe.rows.some(row => row.slice(1).some(filled)))
+    || filled(r.analysis) || filled(r.verdict) || filled(r.conclusion) || filled(r.error) || filled(r.reflection) || r.ai
+    || (state.chat || []).length);
+}
+// 수업(차시)이 바뀌면 이전 탐구 기록을 지움. 내용이 있으면 먼저 물어봄. 계속 진행하면 true
+function startNewInquiry() {
+  if (!hasInquiryContent()) { clearInquiry(); return true; }
+  const label = [unitName(), lessonLabel()].filter(Boolean).join(' · ') || '이전 탐구';
+  const ok = confirm(`다른 수업을 고르면 지금까지의 탐구 기록(${label})이 지워져요.\n탐구 질문, 예상, 점검 체크, 측정 데이터, 결론, 피드백이 모두 사라집니다.\n\n남겨 두려면 [취소]를 누르고 먼저 [파일 저장]을 하세요.\n새 수업으로 바꿀까요?`);
+  if (ok) { clearInquiry(); toast('이전 탐구 기록을 지우고 새 수업을 시작해요.'); }
+  return ok;
+}
+function clearInquiry() {
+  const fresh = newState();
+  Object.assign(state, { expId: '', question: fresh.question, design: fresh.design, data: fresh.data, chat: [], result: fresh.result });
+  state.meta.date = fresh.meta.date;
+  Object.assign(ui, { runLabel: '', showRunId: null, chatDraft: '', aiError: '' });
+}
+
 /* ───────── 관찰 결과 기록 (센서가 보조로 쓰이는 실험의 주요 결과) ───────── */
 const observeExp = () => { const e = currentExperiment(); return e && e.observe ? e : null; };
 function obsData() {
@@ -1451,16 +1477,24 @@ const actions = {
     if (blockedBefore(state.step + 1)) return;
     state.step = Math.min(STEPS.length - 1, state.step + 1); save(); render();
   },
-  setLevel: el => { Object.assign(state.meta, { level: el.dataset.value, grade: '', semester: '', unit: '', std: '', group: '', ...NO_LESSON }); save(); render(); },
-  setGrade: el => { Object.assign(state.meta, { grade: el.dataset.value, semester: '', unit: '', std: '', group: '', ...NO_LESSON }); save(); render(); },
+  setLevel: el => {
+    if (el.dataset.value === state.meta.level || !startNewInquiry()) return;
+    Object.assign(state.meta, { level: el.dataset.value, grade: '', semester: '', unit: '', std: '', group: '', ...NO_LESSON }); save(); render();
+  },
+  setGrade: el => {
+    if (el.dataset.value === state.meta.grade || !startNewInquiry()) return;
+    Object.assign(state.meta, { grade: el.dataset.value, semester: '', unit: '', std: '', group: '', ...NO_LESSON }); save(); render();
+  },
   setSemester: el => {
     const m = state.meta;
+    if (el.dataset.value === m.semester || !startNewInquiry()) return;
     Object.assign(m, { semester: el.dataset.value, unit: '', std: '', group: '', ...NO_LESSON });
     if (m.publisher && !publishersFor(m.grade, m.semester).includes(m.publisher)) m.publisher = '';
     save(); render();
   },
   setPublisher: el => {
     const m = state.meta;
+    if (el.dataset.value === m.publisher || !startNewInquiry()) return;
     m.publisher = el.dataset.value;
     // 같은 단원을 고른 상태면 그 교과서의 단원명으로 바꾸고 차시는 다시 고르게 함
     if (m.std) {
@@ -1473,12 +1507,17 @@ const actions = {
   setUnit: el => {
     const m = state.meta;
     const changed = (m.std || m.unit) !== (el.dataset.std || el.dataset.value) || m.customUnit.trim();
-    if (changed) Object.assign(m, NO_LESSON);
+    if (!changed) return;
+    if (!startNewInquiry()) return;
+    Object.assign(m, NO_LESSON);
     Object.assign(m, { unit: el.dataset.value, std: el.dataset.std || '', group: el.dataset.group, customUnit: '' });
     save(); render();
   },
   setLesson: el => {
     const m = state.meta;
+    // 같은 차시를 다시 고르면 진행 중인 탐구를 그대로 이어 감
+    if (m.lesson === el.dataset.value && Number(m.lessonNo) === Number(el.dataset.no) && !(m.customLesson || '').trim()) return;
+    if (!startNewInquiry()) return;
     Object.assign(m, { lessonNo: Number(el.dataset.no), lesson: el.dataset.value, customLesson: '' });
     // 다른 차시를 고르면 이전 차시의 성취기준 선택은 해제하고, 이 차시의 성취기준만 선택
     const std = el.dataset.std;
@@ -1726,6 +1765,11 @@ function onBind(el) {
   const path = el.dataset.bind;
   let v = el.type === 'checkbox' ? el.checked : el.value;
   if (el.type === 'number') v = el.value === '' ? '' : Number(el.value);
+  // 단원·차시를 직접 입력해 다른 수업으로 바꾸는 경우에도 이전 탐구를 지움
+  if ((path === 'meta.customUnit' || path === 'meta.customLesson') && hasInquiryContent() && !startNewInquiry()) {
+    el.value = getPath(state, path) || '';
+    return;
+  }
   setPath(state, path, v);
   save();
   if (path === 'meta.customUnit') {
