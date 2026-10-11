@@ -629,6 +629,58 @@ const EXPERIMENTS = [
     interval: 0.1, duration: 15 },
 ];
 
+// 센서가 '조건 확인'에 보조로 쓰이고, 주요 결과는 관찰로 얻는 실험
+// x: 기준 열 이름, rows: 미리 넣을 기준 값, cols: 기록할 열 { name, unit, num(숫자 여부), sensor(센서 평균값으로 채울 수 있음) }
+// addRows: 날마다 관찰하는 실험처럼 줄을 더할 수 있는지
+const EXP_OBSERVE = {
+  'seed-temp': { title: '싹튼 씨의 수 관찰', focus: '씨가 싹트는 데 알맞은 온도', x: '관찰한 날', rows: ['1일째', '2일째', '3일째', '4일째', '5일째', '6일째', '7일째'], addRows: true,
+    cols: [{ name: '따뜻한 곳 싹튼 씨', unit: '개', num: true }, { name: '차가운 곳 싹튼 씨', unit: '개', num: true }],
+    hint: '날마다 같은 시각에 싹튼 씨의 수를 세어 기록해요. 센서로 잰 두 곳의 온도는 "조건이 제대로 달랐는지" 확인하는 자료예요.' },
+  'plant-light': { title: '식물이 자란 정도 관찰', focus: '식물이 자라는 데 필요한 햇빛', x: '관찰한 날', rows: ['1일째', '3일째', '5일째', '7일째'], addRows: true,
+    cols: [{ name: '햇빛 받는 곳 키', unit: 'cm', num: true }, { name: '상자 속 키', unit: 'cm', num: true }, { name: '햇빛 받는 곳 잎의 모습', unit: '' }, { name: '상자 속 잎의 모습', unit: '' }],
+    hint: '식물의 키를 자로 재고 잎의 색과 모양을 관찰해 기록해요. 빛 센서 값은 "햇빛 조건이 제대로 달랐는지" 확인하는 자료예요.' },
+  'gas-temp': { title: '고무풍선의 모습 관찰', focus: '온도에 따른 기체의 부피 변화', x: '조건', rows: ['뜨거운 물', '얼음물'],
+    cols: [{ name: '물의 온도', unit: '°C', num: true, sensor: true }, { name: '고무풍선의 모습', unit: '' }],
+    hint: '풍선이 어떻게 변했는지 자세히 적어요. 물의 온도는 [센서 값 넣기]로 측정 기록에서 가져올 수 있어요.' },
+  'dissolve-temp': { title: '녹은 백반의 양 기록', focus: '물의 온도에 따라 녹는 양', x: '조건', rows: ['차가운 물(약 10 °C)', '따뜻한 물(약 40 °C)'],
+    cols: [{ name: '물의 온도', unit: '°C', num: true, sensor: true }, { name: '다 녹은 백반', unit: '숟가락', num: true }, { name: '관찰한 모습', unit: '' }],
+    hint: '더 이상 녹지 않을 때까지 넣은 숟가락 수를 세어 기록해요. 물의 온도는 [센서 값 넣기]로 가져올 수 있어요.' },
+  'season-day': { title: '태양 고도·그림자 길이·기온 기록', focus: '하루 동안 태양 고도, 그림자 길이, 기온의 관계', x: '시각', rows: ['9시', '11시', '12시 30분', '14시', '15시'],
+    cols: [{ name: '태양 고도', unit: '°', num: true }, { name: '그림자 길이', unit: 'cm', num: true }, { name: '기온', unit: '°C', num: true, sensor: true }],
+    hint: '정해진 시각마다 태양 고도 측정기로 태양 고도와 그림자 길이를 재어 기록해요. 기온은 온도 센서 기록에서 [센서 값 넣기]로 가져올 수 있어요.' },
+};
+Object.entries(EXP_OBSERVE).forEach(([id, ob]) => {
+  const e = EXPERIMENTS.find(x => x.id === id);
+  if (e) { e.role = 'support'; e.observe = ob; }
+});
+
+// 그래프 예상 질문의 가로축·세로축 이름 (실험별, 그래프 질문 순서대로)
+const PRE_AXES = {
+  'force-pull': [['시간', '끄는 힘']],
+  'sound-loud': [['시간', '소리 크기']],
+  'mag-pole': [['센서 위치', '자석의 세기']],
+  'mag-distance': [['시간', '자석의 세기']],
+  'gas-pressure': [['시간', '압력']],
+  'body-heart': [['시간', '심박수']],
+  'body-breath': [['시간', '이산화 탄소']],
+  'weather-day': [['시각', '기온']],
+  'weather-dew': [['시간', '온도']],
+  'heat-measure': [['시간', '온도']],
+  'heat-contact': [['시간', '온도']],
+  'heat-move': [['시간', '온도']],
+  'heat-insulate': [['시간', '온도']],
+  'acid-mix': [['넣은 양', 'pH']],
+  'motion-constant': [['시간', '이동 거리'], ['시간', '속력']],
+  'motion-ramp': [['시간', '이동 거리']],
+  'plant-transpire': [['시간', '습도']],
+  'plant-leaf': [['시간', '이산화 탄소']],
+  'season-angle': [['시간', '온도']],
+  'season-day': [['시각', '기온']],
+  'burn-o2': [['시간', '산소']],
+  'burn-co2': [['시간', '이산화 탄소']],
+  'elec-magnet': [['시간', '자석의 세기']],
+};
+
 function experimentsFor(std) { return EXPERIMENTS.filter(e => e.std === std); }
 function findExperiment(id) { return EXPERIMENTS.find(e => e.id === id) || null; }
 function experimentsForLesson(std, title) {

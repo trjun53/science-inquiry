@@ -127,6 +127,52 @@ function drawPlot(canvas, series, opts = {}) {
   }
 }
 
+/**
+ * 막대그래프 (관찰 결과를 조건별로 비교할 때)
+ * categories: 가로축 항목 이름들, series: [{ name, color, values: [숫자|null] }]
+ */
+function drawBars(canvas, categories, series, opts = {}) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = opts.width || canvas.clientWidth || 600, h = opts.height || canvas.clientHeight || 260;
+  canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  if (opts.background) { ctx.fillStyle = opts.background; ctx.fillRect(0, 0, w, h); }
+  const font = '12px "Noto Sans KR", "Malgun Gothic", sans-serif';
+  const pad = { l: 60, r: 16, t: series.length > 1 ? 34 : 16, b: 44 };
+  const pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
+  const vals = series.flatMap(s => s.values).filter(v => v !== null && isFinite(v));
+  ctx.font = font;
+  if (!vals.length) { ctx.fillStyle = '#94a3b8'; ctx.textAlign = 'center'; ctx.fillText(opts.empty || '관찰 결과를 기록하면 그래프가 그려집니다', w / 2, h / 2); return; }
+  const Y = niceTicks(Math.min(0, ...vals), Math.max(...vals) * 1.1 || 1, Math.max(3, Math.floor(ph / 45)));
+  const sy = y => pad.t + ph - (y - Y.lo) / (Y.hi - Y.lo) * ph;
+  ctx.strokeStyle = '#e2e8f0'; ctx.fillStyle = '#475569'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  Y.ticks.forEach(v => { const y = Math.round(sy(v)) + 0.5; ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(pad.l + pw, y); ctx.stroke(); ctx.fillText(fmtTick(v, Y.step), pad.l - 8, y); });
+  const groupW = pw / categories.length, barW = Math.min(46, groupW * 0.7 / series.length);
+  categories.forEach((c, ci) => {
+    const gx = pad.l + groupW * ci + (groupW - barW * series.length) / 2;
+    series.forEach((s, si) => {
+      const v = s.values[ci];
+      if (v === null || !isFinite(v)) return;
+      ctx.fillStyle = s.color || PLOT_COLORS[si % PLOT_COLORS.length];
+      const y0 = sy(Math.max(0, Y.lo)), y1 = sy(v);
+      ctx.fillRect(gx + barW * si, Math.min(y0, y1), barW - 3, Math.abs(y0 - y1));
+    });
+    ctx.fillStyle = '#475569'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.fillText(c.length > 10 ? c.slice(0, 10) + '…' : c, pad.l + groupW * ci + groupW / 2, pad.t + ph + 6);
+  });
+  ctx.strokeStyle = '#94a3b8'; ctx.beginPath(); ctx.moveTo(pad.l + 0.5, pad.t); ctx.lineTo(pad.l + 0.5, pad.t + ph); ctx.lineTo(pad.l + pw, pad.t + ph + 0.5); ctx.stroke();
+  ctx.font = 'bold ' + font; ctx.fillStyle = '#475569';
+  if (opts.xLabel) { ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'; ctx.fillText(opts.xLabel, pad.l + pw / 2, h - 4); }
+  if (opts.yLabel) { ctx.save(); ctx.translate(14, pad.t + ph / 2); ctx.rotate(-Math.PI / 2); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(opts.yLabel, 0, 0); ctx.restore(); }
+  if (series.length > 1) {
+    ctx.font = font; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+    let x = pad.l;
+    series.forEach((s, i) => { ctx.fillStyle = s.color || PLOT_COLORS[i % PLOT_COLORS.length]; ctx.fillRect(x, 10, 12, 10); ctx.fillStyle = '#475569'; ctx.fillText(s.name, x + 16, 15); x += ctx.measureText(s.name).width + 32; });
+  }
+}
+
 function runStats(points) {
   const pts = points.filter(([, y]) => y !== null && isFinite(y));
   if (!pts.length) return null;

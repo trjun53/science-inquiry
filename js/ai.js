@@ -60,6 +60,7 @@ const AI_SYSTEM_PROMPT = `당신은 한국 초·중·고등학교의 경험 많�
 5. 평가와 성찰: 오차 원인과 개선 방법, 새롭게 알게 된 점이 구체적인지
 
 작성 원칙:
+- 보고서에 "관찰 결과(주요 결과)"가 있으면 디지털 센서는 조건 확인용 보조 도구입니다. 이때 측정과 데이터, 결과 해석과 결론은 관찰 결과를 주요 근거로 평가하고, 센서 데이터는 조건이 제대로 통제되었는지 확인하는 근거로만 봅니다.
 - 보고서에 실제로 적힌 내용과 측정 데이터만 근거로 삼습니다. 비어 있는 항목은 "작성하지 않음"으로 보고, 무엇을 쓰면 좋을지 구체적으로 안내합니다.
 - 학생의 학년 수준에 맞는 쉬운 말로, 학생에게 직접 말하듯 "~해요"체로 씁니다. 칭찬(strength)은 구체적으로, 개선점(improvement)은 바로 실천할 수 있게 씁니다.
 - 해당 학년 교육과정 범위를 넘는 개념을 요구하지 않습니다. 과학적으로 틀린 설명이 있으면 부드럽게 바로잡습니다.
@@ -96,7 +97,14 @@ function buildReportForAI() {
   const safety = safetyList().filter((_, i) => d.safety['s' + i]);
   add('확인한 안전 수칙', safety.join(' / '));
 
-  lines.push('', '## 3. 측정 데이터');
+  const oe = observeExp();
+  if (oe) {
+    const o = obsData();
+    lines.push('', `## 3-1. 관찰 결과 (이 탐구의 주요 결과: ${oe.observe.focus})`);
+    lines.push(`| ${oe.observe.x} | ${oe.observe.cols.map(obsColLabel).join(' | ')} |`);
+    o.rows.forEach(r => lines.push(`| ${r.map(v => (v === '' ? '(기록 없음)' : v)).join(' | ')} |`));
+    lines.push('', '## 3-2. 조건 확인용 센서 데이터 (보조 자료: 실험 조건이 제대로 달랐는지 확인하는 용도)');
+  } else lines.push('', '## 3. 측정 데이터');
   if (!state.data.runs.length) lines.push('(측정 데이터 없음)');
   state.data.runs.forEach(run => {
     const manual = run.mode === 'manual';

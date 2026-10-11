@@ -347,25 +347,40 @@ const GRAPH_SHAPES = {
   parallel: ['M24 52 L276 52', 'M24 140 L276 140'], diverge: ['M24 94 L276 32', 'M24 100 L276 156'],
   lag: ['M24 150 C66 58 140 44 276 40', 'M24 150 C120 150 170 72 276 62'],
 };
-function graphSvg(shape) {
+// axes = [가로축 이름, 세로축 이름] — 있으면 축 끝에 화살표와 이름을 표시
+function graphSvg(shape, axes) {
   const paths = GRAPH_SHAPES[shape] || GRAPH_SHAPES.flat;
   const colors = paths.length > 1 ? ['#e11d48', '#2563eb'] : ['#0d9488'];
-  return `<svg viewBox="0 0 300 180" class="gsvg" aria-hidden="true">
-    <path d="M22 12 L22 164 L292 164" fill="none" stroke="#94a3b8" stroke-width="5"/>
-    ${paths.map((d, i) => `<path d="${d}" fill="none" stroke="${colors[i]}" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>`).join('')}
+  const lines = paths.map((d, i) => `<path d="${d}" fill="none" stroke="${colors[i]}" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>`).join('');
+  if (!axes) {
+    return `<svg viewBox="0 0 300 180" class="gsvg" aria-hidden="true">
+      <path d="M22 12 L22 164 L292 164" fill="none" stroke="#94a3b8" stroke-width="5"/>${lines}</svg>`;
+  }
+  const [xName, yName] = axes;
+  return `<svg viewBox="-40 -14 340 216" class="gsvg" role="img" aria-label="가로축 ${esc(xName)}, 세로축 ${esc(yName)}">
+    <path d="M22 168 L22 4 M292 164 L18 164" fill="none" stroke="#94a3b8" stroke-width="5"/>
+    <path d="M12 14 L22 -2 L32 14 Z M282 154 L298 164 L282 174 Z" fill="#94a3b8"/>
+    ${lines}
+    <text x="-14" y="86" transform="rotate(-90 -14 86)" text-anchor="middle" class="ax">${esc(yName)}</text>
+    <text x="157" y="196" text-anchor="middle" class="ax">${esc(xName)}</text>
   </svg>`;
 }
 function preQuestionsHtml(exp) {
   const ans = state.question.pre[exp.id] || {};
-  return exp.pre.map((p, qi) => `
+  let gi = 0;
+  return exp.pre.map((p, qi) => {
+    const axes = p.graph ? ((PRE_AXES[exp.id] || [])[gi++] || null) : null;
+    return `
     <div class="pre-q">
       <h4>예상 ${qi + 1}. ${esc(p.q)}</h4>
+      ${axes ? `<p class="axis-hint">가로축(→): <b>${esc(axes[0])}</b> · 세로축(↑): <b>${esc(axes[1])}</b></p>` : ''}
       ${p.graph
         ? `<div class="g-opts">${p.graph.map(([shape, label], oi) => `
-            <button class="g-opt ${ans[qi] === oi ? 'on' : ''}" data-action="pickPre" data-q="${qi}" data-o="${oi}">${graphSvg(shape)}<span>${esc(label)}</span></button>`).join('')}</div>`
+            <button class="g-opt ${ans[qi] === oi ? 'on' : ''}" data-action="pickPre" data-q="${qi}" data-o="${oi}">${graphSvg(shape, axes)}<span>${esc(label)}</span></button>`).join('')}</div>`
         : `<div class="t-opts">${p.opts.map((o, oi) => `
             <button class="t-opt ${ans[qi] === oi ? 'on' : ''}" data-action="pickPre" data-q="${qi}" data-o="${oi}"><i></i><span>${esc(o)}</span></button>`).join('')}</div>`}
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 // 보고서·결론에서 쓰는 예상 답 요약
 function preAnswers(exp) {
@@ -450,7 +465,7 @@ function viewDesign() {
   return `
   <section class="page-head"><h2>실험 설계 및 준비</h2><p>무엇을 다르게 하고 무엇을 같게 할지 정하고, 준비물과 실험 과정을 확인해요.</p>
     ${state.question.question ? `<div class="qbanner">탐구 질문: ${esc(state.question.question)}</div>` : ''}
-    ${exp ? `<p class="muted small src-note">‘${esc(exp.title)}’ 실험 내용으로 채웠어요. 준비물과 실험 과정은 교과서 실험을 바탕으로 정리했고, 센서 연결부터 측정까지의 과정은 디지털 센서용으로 새로 썼어요. 우리 반에 맞게 고쳐 써도 돼요.</p>` : ''}</section>
+    ${exp ? `<p class="muted small src-note">‘${esc(exp.title)}’ 실험 내용으로 채웠어요. 준비물과 실험 과정은 교과서 실험을 바탕으로 정리했고, 센서 연결부터 측정까지의 과정은 디지털 센서용으로 새로 썼어요. 우리 반에 맞게 고쳐 써도 돼요.</p>` : ''}${supportBanner()}</section>
   <div class="two-col">
     <div>
       <section class="card">
@@ -523,13 +538,15 @@ function viewMeasure() {
   const runs = state.data.runs;
   if (!ui.runLabel) ui.runLabel = levels[runs.length] || levels[0] || `시행 ${runs.length + 1}`;
   const manual = state.design.measureMode === 'manual';
+  const support = !!observeExp();
   return `
-  <section class="page-head"><h2>실험 및 측정</h2><p>실험 조건을 바꿔 가며 센서로 데이터를 측정해요. 조건마다 한 번씩 측정하면 데이터 분석에서 비교할 수 있어요.</p>
-    ${state.question.question ? `<div class="qbanner">탐구 질문: ${esc(state.question.question)}</div>` : ''}</section>
+  <section class="page-head"><h2>실험 및 측정</h2><p>${support ? '실험하면서 관찰한 결과를 기록하고, 센서로 실험 조건을 확인해요.' : '실험 조건을 바꿔 가며 센서로 데이터를 측정해요. 조건마다 한 번씩 측정하면 데이터 분석에서 비교할 수 있어요.'}</p>
+    ${state.question.question ? `<div class="qbanner">탐구 질문: ${esc(state.question.question)}</div>` : ''}${supportBanner()}</section>
+  ${support ? obsCard(true, '① 관찰 결과 기록 (주요 결과)') : ''}
   <div id="connBar">${connBar()}</div>
   <div class="measure-layout">
     <section class="card">
-      <h3>① 측정하기</h3>
+      <h3>${support ? '② 조건 확인 측정 (센서)' : '① 측정하기'}</h3>
       <div class="mode-switch">
         <button class="mode-btn ${manual ? '' : 'on'}" data-action="setMode" data-value="auto"><b>⏱ 자동 측정</b><small>정해진 간격으로 계속 기록해요</small></button>
         <button class="mode-btn ${manual ? 'on' : ''}" data-action="setMode" data-value="manual"><b>✋ 수동 기록</b><small>[값 기록] 버튼을 누를 때만 기록해요</small></button>
@@ -560,7 +577,7 @@ function viewMeasure() {
     </section>
   </div>
   <section class="card">
-    <div class="card-head"><h3>② 측정 기록 <span class="count">${runs.length}</span></h3>
+    <div class="card-head"><h3>${support ? '③ 센서 측정 기록' : '② 측정 기록'} <span class="count">${runs.length}</span></h3>
       <div><button class="btn small ghost" data-action="exportCsv" ${runs.length ? '' : 'disabled'}>CSV 내려받기</button></div></div>
     <div id="runList">${runList()}</div>
   </section>`;
@@ -724,22 +741,26 @@ function viewAnalysis() {
   const keys = channelKeys();
   const key = currentKey();
   const r = state.result;
+  const support = !!observeExp();
   return `
-  <section class="page-head"><h2>데이터 분석</h2><p>조건별 그래프를 겹쳐 보고 표의 값을 비교해, 데이터에서 알 수 있는 사실을 정리해요.</p>
-    ${state.question.question ? `<div class="qbanner">탐구 질문: ${esc(state.question.question)}</div>` : ''}</section>
+  <section class="page-head"><h2>데이터 분석</h2><p>${support ? '관찰 결과를 표와 그래프로 비교하고, 센서 데이터로 조건이 제대로 달랐는지 확인해요.' : '조건별 그래프를 겹쳐 보고 표의 값을 비교해, 데이터에서 알 수 있는 사실을 정리해요.'}</p>
+    ${state.question.question ? `<div class="qbanner">탐구 질문: ${esc(state.question.question)}</div>` : ''}${supportBanner()}</section>
+  ${support ? obsCard(false, '① 주요 결과: 관찰 결과') : ''}
   <section class="card">
+    ${support ? '<p class="muted small" style="margin-top:0">아래는 실험 조건을 확인하는 센서 데이터예요.</p>' : ''}
     ${keys.length ? `
-    <div class="card-head"><h3>① 그래프로 비교하기</h3>
+    <div class="card-head"><h3>${support ? '② 조건 확인 데이터 (센서)' : '① 그래프로 비교하기'}</h3>
       <label class="inline-field">측정 항목 <select data-action="pickChannel">${keys.map(k => { const [n, u] = k.split('|'); return `<option value="${esc(k)}" ${k === key ? 'selected' : ''}>${esc(n)}${u ? ` (${esc(u)})` : ''}</option>`; }).join('')}</select></label></div>
     <div class="run-toggles">${state.data.runs.map((run, i) => `<label class="check pill"><input type="checkbox" data-action="toggleRun" data-id="${run.id}" ${r.hidden[run.id] ? '' : 'checked'}><span class="swatch" style="background:${PLOT_COLORS[i % PLOT_COLORS.length]}"></span>${esc(run.label)}</label>`).join('')}</div>
-    <div class="chart-wrap tall"><canvas id="resultChart"></canvas></div>
-    <h3>② 데이터 요약</h3>
+    <div class="chart-wrap ${support ? '' : 'tall'}"><canvas id="resultChart"></canvas></div>
+    <h3>${support ? '센서 데이터 요약' : '② 데이터 요약'}</h3>
     <div class="table-scroll" id="statsBox">${statsTable(key)}</div>`
-    : `<p class="muted center pad">아직 측정 데이터가 없습니다. <button class="btn small" data-action="goto" data-step="${STEP.measure}">실험 및 측정하러 가기</button></p>`}
+    : `<p class="muted center pad">아직 ${support ? '센서 ' : ''}측정 데이터가 없습니다. <button class="btn small" data-action="goto" data-step="${STEP.measure}">실험 및 측정하러 가기</button></p>`}
   </section>
   <section class="card">
     <h3>③ 결과 해석</h3>
-    ${field('그래프와 표에서 알 수 있는 사실', 'result.analysis', { textarea: true, rows: 5, placeholder: '예: 물의 양이 50 mL일 때 3분 동안 온도가 약 38 °C 올랐고, 150 mL일 때는 약 14 °C 올랐다. 물의 양이 많을수록 온도 변화량이 작았다.' })}
+    ${field(support ? '관찰 결과에서 알 수 있는 사실 (센서로 확인한 조건도 함께)' : '그래프와 표에서 알 수 있는 사실', 'result.analysis', { textarea: true, rows: 5,
+      placeholder: support ? '예: 따뜻한 곳(약 24 °C)에 둔 씨는 3일째부터 싹이 텄고, 냉장고(약 4 °C)에 둔 씨는 7일 동안 거의 싹이 트지 않았다.' : '예: 물의 양이 50 mL일 때 3분 동안 온도가 약 38 °C 올랐고, 150 mL일 때는 약 14 °C 올랐다. 물의 양이 많을수록 온도 변화량이 작았다.' })}
     ${state.question.hypothesis ? `<div class="tipbox"><strong>나의 예상</strong><p>${nl2br(state.question.hypothesis)}</p></div>` : ''}
   </section>`;
 }
@@ -754,9 +775,10 @@ function viewConclusion() {
   return `
   <section class="page-head"><h2>결론 및 피드백</h2><p>측정 그래프를 다시 보며 예상이 맞았는지 판단하고 탐구 질문에 대한 답을 쓴 뒤, AI 선생님의 피드백을 받아요.</p>
     ${state.question.question ? `<div class="qbanner">탐구 질문: ${esc(state.question.question)}</div>` : ''}</section>
+  ${observeExp() ? obsCard(false, '① 관찰 결과 다시 보기 (주요 결과)') : ''}
   <section class="card">
     ${keys.length ? `
-    <div class="card-head"><h3>① 측정 결과 다시 보기</h3>
+    <div class="card-head"><h3>${observeExp() ? '조건 확인 데이터 (센서)' : '① 측정 결과 다시 보기'}</h3>
       <label class="inline-field">측정 항목 <select data-action="pickChannel">${keys.map(k => { const [n, u] = k.split('|'); return `<option value="${esc(k)}" ${k === key ? 'selected' : ''}>${esc(n)}${u ? ` (${esc(u)})` : ''}</option>`; }).join('')}</select></label></div>
     <div class="chart-wrap"><canvas id="conclusionChart"></canvas></div>
     <div class="table-scroll" id="statsBox">${statsTable(key)}</div>`
@@ -840,8 +862,12 @@ function viewReport() {
       ${safety.length || d.safetyNote ? `<h4>안전 유의사항</h4><ul>${safety.map(s => `<li>${esc(s)}</li>`).join('')}</ul>${d.safetyNote ? `<p>${nl2br(d.safetyNote)}</p>` : ''}` : ''}
     </section>
     <section><h2>3. 실험 결과</h2>
+      ${observeExp() ? `<h4>3-1. 관찰 결과 (주요 결과) — ${esc(observeExp().observe.title)}</h4>
+        ${obsTableHtml(false)}
+        ${obsChartImages().map(src => `<figure><img src="${src}" alt="관찰 결과 그래프"></figure>`).join('')}
+        <h4>3-2. 조건 확인 데이터 (센서)</h4>` : ''}
       ${keys.length ? keys.map(k => { const [n, u] = k.split('|'); return `
-        <figure><img src="${chartImage(k)}" alt="${esc(n)} 그래프"><figcaption>시간에 따른 ${esc(n)}${u ? ` (${esc(u)})` : ''} 변화</figcaption></figure>
+        <figure ${observeExp() ? 'class="small-fig"' : ''}><img src="${chartImage(k)}" alt="${esc(n)} 그래프"><figcaption>${xAxisFor(seriesFor(k, false)).manual ? '' : '시간에 따른 '}${esc(n)}${u ? ` (${esc(u)})` : ''} 변화</figcaption></figure>
         ${statsTable(k, true)}`; }).join('') : '<p><span class="blank">(측정 데이터 없음)</span></p>'}
       <h4>데이터 분석</h4><p>${blank(r.analysis)}</p>
     </section>
@@ -860,7 +886,8 @@ function afterRender(step) {
   setSaved(true);
   document.querySelectorAll('textarea.auto').forEach(autosize);
   if (step === 'connect' || step === 'measure') { updateLive(); updateMeasureButtons(); }
-  if (step === 'analysis') drawResult('#resultChart');
+  if (step === 'analysis') { drawResult('#resultChart'); drawObsCharts('obsA'); }
+  if (step === 'conclusion') drawObsCharts('obsC');
   if (step === 'conclusion') drawResult('#conclusionChart');
 }
 // 그래프 가로축: 자동 측정은 시간, 수동 기록은 그 기록의 가로축 이름
@@ -877,6 +904,111 @@ function drawResult(sel) {
   const ax = xAxisFor(series);
   drawPlot(c, series, { xLabel: ax.label, xMinZero: !ax.manual, yLabel: `${n}${u ? ` (${u})` : ''}` });
 }
+
+/* ───────── 관찰 결과 기록 (센서가 보조로 쓰이는 실험의 주요 결과) ───────── */
+const observeExp = () => { const e = currentExperiment(); return e && e.observe ? e : null; };
+function obsData() {
+  const e = observeExp();
+  if (!e) return null;
+  const o = state.data.observe;
+  if (!o || o.expId !== e.id) state.data.observe = { expId: e.id, rows: e.observe.rows.map(x => [x, ...e.observe.cols.map(() => '')]) };
+  return state.data.observe;
+}
+const obsColLabel = c => `${c.name}${c.unit ? ` (${c.unit})` : ''}`;
+function obsTableHtml(editable) {
+  const e = observeExp(), o = obsData();
+  if (!e) return '';
+  const ob = e.observe;
+  return `<div class="table-scroll"><table class="data obs-table"><thead><tr><th>${esc(ob.x)}</th>${ob.cols.map(c => `<th>${esc(obsColLabel(c))}${c.sensor ? ' <small class="muted">센서</small>' : ''}</th>`).join('')}${editable && ob.addRows ? '<th></th>' : ''}</tr></thead><tbody>
+    ${o.rows.map((row, ri) => `<tr>
+      <td>${editable && ob.addRows ? `<input class="inline" data-obs="${ri}.0" value="${esc(row[0])}">` : esc(row[0])}</td>
+      ${ob.cols.map((c, ci) => `<td>${editable
+        ? `<input class="inline ${c.num ? 'num' : ''}" data-obs="${ri}.${ci + 1}" value="${esc(row[ci + 1])}" ${c.num ? 'inputmode="decimal"' : ''} placeholder="${c.num ? '숫자' : '관찰한 모습'}">`
+        : (row[ci + 1] !== '' ? esc(row[ci + 1]) : '<span class="blank">-</span>')}</td>`).join('')}
+      ${editable && ob.addRows ? `<td><button class="icon-btn" data-action="obsRemoveRow" data-i="${ri}" title="줄 삭제">✕</button></td>` : ''}
+    </tr>`).join('')}</tbody></table></div>`;
+}
+// 숫자 열을 단위별로 묶어 그래프 하나씩
+function obsGroups(e) {
+  const groups = [];
+  e.observe.cols.forEach((c, ci) => {
+    if (!c.num) return;
+    let g = groups.find(x => x.unit === c.unit);
+    if (!g) groups.push(g = { unit: c.unit, cols: [] });
+    g.cols.push(ci);
+  });
+  return groups;
+}
+const obsX = label => { // '3일째' → 3, '12시 30분' → 12.5
+  const t = /(\d+)\s*시\s*(?:(\d+)\s*분)?/.exec(label);
+  if (t) return Number(t[1]) + (t[2] ? Number(t[2]) / 60 : 0);
+  const n = /(\d+(?:\.\d+)?)/.exec(label);
+  return n ? Number(n[1]) : null;
+};
+function drawObsChart(canvas, e, g, opts = {}) {
+  const o = obsData();
+  const num = v => (v === '' || v === null || isNaN(Number(v)) ? null : Number(v));
+  const yLabel = g.cols.length === 1 ? obsColLabel(e.observe.cols[g.cols[0]]) : (g.unit || '값');
+  if (e.observe.x === '조건') {
+    drawBars(canvas, o.rows.map(r => r[0]), g.cols.map((ci, i) => ({ name: e.observe.cols[ci].name, color: PLOT_COLORS[i], values: o.rows.map(r => num(r[ci + 1])) })), { ...opts, xLabel: e.observe.x, yLabel });
+  } else {
+    drawPlot(canvas, g.cols.map((ci, i) => ({ name: e.observe.cols[ci].name, color: PLOT_COLORS[i], points: o.rows.map(r => [obsX(r[0]), num(r[ci + 1])]).filter(p => p[0] !== null) })),
+      { ...opts, xLabel: e.observe.x === '시각' ? '시각 (시)' : `${e.observe.x} (일째)`, yLabel, xMinZero: false, empty: '관찰 결과를 기록하면 그래프가 그려집니다' });
+  }
+}
+function obsChartsHtml(prefix) {
+  const e = observeExp();
+  return e ? `<div class="obs-charts">${obsGroups(e).map((g, gi) => `<div class="chart-wrap obs"><canvas id="${prefix}${gi}"></canvas></div>`).join('')}</div>` : '';
+}
+function drawObsCharts(prefix) {
+  const e = observeExp();
+  if (!e) return;
+  obsGroups(e).forEach((g, gi) => { const c = $(`#${prefix}${gi}`); if (c) drawObsChart(c, e, g); });
+}
+function obsChartImages() {
+  const e = observeExp();
+  if (!e) return [];
+  return obsGroups(e).map(g => { const c = document.createElement('canvas'); drawObsChart(c, e, g, { width: 760, height: 300, background: '#ffffff' }); return c.toDataURL('image/png'); });
+}
+// 센서 측정 기록에서 조건 이름이 같은 측정의 평균값(뒤쪽 1/3)을 가져옴
+function obsFillSensor() {
+  const e = observeExp(), o = obsData();
+  if (!e) return;
+  const norm = s => String(s).replace(/\s|\(.*?\)/g, '');
+  let filled = 0;
+  e.observe.cols.forEach((c, ci) => {
+    if (!c.sensor) return;
+    o.rows.forEach(row => {
+      const run = state.data.runs.find(r => norm(r.label) === norm(row[0]));
+      if (!run || !run.rows.length) return;
+      const ys = run.rows.map(r => r[1]).filter(v => v !== null && isFinite(v));
+      const tail = ys.slice(Math.floor(ys.length * 2 / 3));
+      if (!tail.length) return;
+      row[ci + 1] = String(Math.round(tail.reduce((a, b) => a + b, 0) / tail.length * 10) / 10);
+      filled++;
+    });
+  });
+  save();
+  toast(filled ? `센서 측정값 ${filled}개를 넣었어요.` : '측정 조건 이름이 표의 조건과 같은 측정 기록이 없어요. 측정할 때 조건 이름을 표와 같게 해 주세요.', filled ? '' : 'warn');
+  const box = $('#obsBox'); if (box) box.innerHTML = obsTableHtml(true);
+}
+function obsCard(editable, heading) {
+  const e = observeExp();
+  if (!e) return '';
+  const hasSensorCol = e.observe.cols.some(c => c.sensor);
+  return `
+  <section class="card obs-card">
+    <div class="card-head"><h3>${heading}</h3>
+      ${editable ? `<div class="row-gap">${hasSensorCol ? '<button class="btn small ghost" data-action="obsFillSensor">센서 값 넣기</button>' : ''}${e.observe.addRows ? '<button class="btn small ghost" data-action="obsAddRow">+ 줄 추가</button>' : ''}</div>` : ''}</div>
+    ${editable ? `<p class="muted small">${esc(e.observe.hint)}</p>` : ''}
+    <div id="obsBox">${obsTableHtml(editable)}</div>
+    ${editable ? '' : obsChartsHtml(heading.includes('다시') ? 'obsC' : 'obsA')}
+  </section>`;
+}
+const supportBanner = () => {
+  const e = observeExp();
+  return e ? `<div class="support-banner"><b>이 차시의 탐구 중심은 '${esc(e.observe.focus)}'이에요.</b> 주요 결과는 <b>관찰 결과 기록</b>이고, 디지털 센서는 실험 조건이 제대로 달랐는지 <b>확인하는 도구</b>로 써요.</div>` : '';
+};
 
 /* ───────── 필수 점검: 좋은 탐구 질문(1단계), 안전 점검(2단계) ───────── */
 function uncheckedItems(stepKey) {
@@ -1295,6 +1427,20 @@ const actions = {
   },
   closeNotice: () => { const n = $('#noticeModal'); if (n) n.remove(); flashChecklist(); },
   home: () => { state.step = 0; save(); render(); },
+  obsFillSensor: () => obsFillSensor(),
+  obsAddRow: () => {
+    const e = observeExp(), o = obsData();
+    if (!e) return;
+    const last = o.rows.length ? obsX(o.rows[o.rows.length - 1][0]) : 0;
+    o.rows.push([e.observe.x === '관찰한 날' ? `${(last || 0) + 1}일째` : '', ...e.observe.cols.map(() => '')]);
+    save(); $('#obsBox').innerHTML = obsTableHtml(true);
+  },
+  obsRemoveRow: el => {
+    const o = obsData();
+    if (!o || o.rows.length <= 1) return;
+    o.rows.splice(Number(el.dataset.i), 1);
+    save(); $('#obsBox').innerHTML = obsTableHtml(true);
+  },
   chatToggle: () => { ui.chatOpen = !ui.chatOpen; renderChat(); if (ui.chatOpen) { const i = $('#chatInput'); if (i && !i.disabled) i.focus(); } },
   chatSend: () => { const i = $('#chatInput'); chatSend(i ? i.value : ''); },
   chatSuggest: el => chatSend(el.dataset.value),
@@ -1334,11 +1480,9 @@ const actions = {
   setLesson: el => {
     const m = state.meta;
     Object.assign(m, { lessonNo: Number(el.dataset.no), lesson: el.dataset.value, customLesson: '' });
+    // 다른 차시를 고르면 이전 차시의 성취기준 선택은 해제하고, 이 차시의 성취기준만 선택
     const std = el.dataset.std;
-    if (std && unitInfo() && !(m.standards || []).includes(std)) {
-      const set = new Set([...(m.standards || []), std]);
-      m.standards = standardsFor(unitInfo().std).map(s => s.code).filter(c => set.has(c));
-    }
+    m.standards = std && unitInfo() ? [std] : [];
     if (el.dataset.exp) applyExperiment(el.dataset.exp, true);
     else if (el.dataset.sensor && !state.design.sensor) state.design.sensor = el.dataset.sensor;
     save();
@@ -1473,13 +1617,13 @@ const actions = {
   saveJson: () => download(`탐구보고서_${state.meta.name || '학생'}_${state.meta.date || today()}.json`, JSON.stringify(state, null, 1), 'application/json'),
   loadJson: () => $('#jsonFile').click(),
   reset: async () => {
-    if (!confirm('새 보고서를 시작할까요? 현재 내용은 지워집니다. (필요하면 먼저 보고서 파일을 저장하세요)')) return;
+    if (!confirm('새 보고서를 시작할까요? 탐구 질문, 예상, 점검 체크, 실험 설계, 측정 데이터, 결론, 피드백, 대화가 모두 지워집니다. (필요하면 먼저 [파일 저장]을 하세요)')) return;
     if (driver && driver.connected) await driver.disconnect();
-    const keepMeta = state.meta;
+    // 화면에 남은 입력값·임시 상태까지 모두 없애도록 완전히 새로 시작
+    clearTimeout(saveTimer);
     state = newState();
-    Object.assign(state.meta, { level: keepMeta.level, grade: keepMeta.grade, semester: keepMeta.semester });
-    ui.runLabel = ''; ui.showRunId = null;
-    save(true); render();
+    save(true);
+    location.reload();
   },
 };
 
@@ -1553,6 +1697,10 @@ document.addEventListener('input', e => {
   if (el.matches('textarea.auto')) autosize(el);
   if (el.id === 'runLabel') ui.runLabel = el.value;
   if (el.id === 'chatInput') ui.chatDraft = el.value;
+  if (el.dataset.obs) {
+    const o = obsData(), [ri, ci] = el.dataset.obs.split('.').map(Number);
+    if (o && o.rows[ri]) { o.rows[ri][ci] = el.value; save(); }
+  }
   if (el.matches('[data-run]')) {
     const run = state.data.runs.find(r => r.id === el.dataset.run);
     if (run) { run.label = el.value; save(); }
@@ -1606,8 +1754,10 @@ function onBind(el) {
 }
 
 window.addEventListener('resize', () => {
-  if (STEPS[state.step].key === 'sensor') updateLive();
-  if (STEPS[state.step].key === 'result') drawResult();
+  const k = STEPS[state.step].key;
+  if (k === 'connect' || k === 'measure') updateLive();
+  if (k === 'analysis') { drawResult('#resultChart'); drawObsCharts('obsA'); }
+  if (k === 'conclusion') { drawResult('#conclusionChart'); drawObsCharts('obsC'); }
 });
 window.addEventListener('beforeunload', e => {
   save(true);
