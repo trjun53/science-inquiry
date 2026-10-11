@@ -1452,7 +1452,16 @@ const actions = {
     state.step = to; save(); render();
   },
   closeNotice: () => { const n = $('#noticeModal'); if (n) n.remove(); flashChecklist(); },
-  home: () => { state.step = 0; save(); render(); },
+  home: async () => {
+    if (state.step !== 0) { state.step = 0; save(); render(); return; }
+    // 첫 화면에서 제목을 누르면 선택과 기록을 모두 지우고 새로 시작
+    if (hasInquiryContent() && !confirm('처음 상태로 되돌릴까요? 선택한 수업과 지금까지의 탐구 기록이 모두 지워집니다.\n(남겨 두려면 [취소]를 누르고 먼저 [파일 저장]을 하세요)')) return;
+    if (driver && driver.connected) await driver.disconnect();
+    clearTimeout(saveTimer);
+    state = newState();
+    save(true);
+    location.reload();
+  },
   obsFillSensor: () => obsFillSensor(),
   obsAddRow: () => {
     const e = observeExp(), o = obsData();
