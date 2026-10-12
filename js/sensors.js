@@ -776,7 +776,7 @@ class ScienceCubeDriver extends BaseDriver {
       try {
         step = '블루투스 연결';
         const server = await this.device.gatt.connect();
-        await sleep(200); // 연결 직후 바로 요청하면 실패하는 경우가 있어 잠시 기다림
+        // 제조사 앱처럼 연결되자마자 바로 서비스를 찾음 (기다리는 사이 센서가 연결을 끊는 경우가 있음)
         step = '서비스 찾기';
         const svc = await server.getPrimaryService(SC_SERVICE);
         step = '통신 통로 찾기';
@@ -805,6 +805,11 @@ class ScienceCubeDriver extends BaseDriver {
       if (/Authentication|Insufficient/i.test(lastErr.message || '')) {
         throw new Error('이 센서는 Windows에서 먼저 페어링해야 합니다. 설정 > 블루투스 및 장치 > 장치 추가 > 블루투스에서 '
           + `${this.deviceName}을(를) 선택해 페어링한 뒤, 이 화면에서 다시 [블루투스로 연결]을 누르세요.`);
+      }
+      if (/disconnected/i.test(lastErr.message || '')) {
+        throw new Error('센서가 연결되자마자 연결을 끊었습니다. Windows와 센서의 페어링 정보가 맞지 않을 때 주로 생깁니다. '
+          + 'Windows 설정 > 블루투스 및 장치에서 이 센서를 [장치 제거]하고, 센서를 껐다 켠 뒤(모바일 모드) 다시 연결해 보세요. '
+          + '그래도 안 되면 그때 Windows에서 새로 페어링한 뒤 연결하세요.');
       }
       const pair = /GATT operation failed/i.test(lastErr.message || '');
       throw new Error(`${step} 단계에서 실패했습니다 (${lastErr.message}). `
