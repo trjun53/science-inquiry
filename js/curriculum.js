@@ -97,7 +97,17 @@ function lessonSensors(std, title) {
   return [...new Set(experimentsForLesson(std, title).flatMap(e => e.sensors))];
 }
 // 차시명과 가장 가까운 성취기준을 찾음 (낱말 겹침 정도)
+// 낱말 겹침만으로는 동점이 나거나 헷갈리는 차시를 바로잡는 핵심어 (그 단원의 성취기준일 때만 적용)
+const STD_HINTS = [
+  [/단열/, '6과07-04'],
+  [/질병/, '6과04-03'],
+  [/(소화|순환|호흡|배설) ?기관/, '6과04-02'],
+  [/생태계|피해/, '6과14-04'],
+  [/생성되는 물질|생기는 물질|연소 후|연소 전과 후/, '6과14-03'],
+];
 function matchStandard(std, title) {
+  const hint = STD_HINTS.find(([re, code]) => re.test(title) && standardsFor(std).some(s => s.code === code));
+  if (hint) return hint[1];
   const words = s => new Set((s.match(/[가-힣]{2,}/g) || []).map(w => w.slice(0, 2)));
   const t = words(title);
   let best = null, bestScore = 0;

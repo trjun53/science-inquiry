@@ -41,7 +41,9 @@ const EXP_SIM = {
   'gas-temp': ({ t, k }) => [approach(t, ROOM, pick([60, 2], k), 6)],
 
   // 빛의 성질 — 물질에 따라 통과하는 빛이 다름 / 볼록 렌즈로 모으면 밝아짐
-  'light-pass': ({ k }) => [pick([820, 740, 360, 55], k)],
+  'light-see': ({ k }) => [pick([3, 650], k)],           // 구멍을 막으면 거의 0, 손전등을 비추면 밝음
+  'light-straight': ({ k }) => [pick([520, 6], k)],      // 구멍이 일직선이면 빛이 도달, 어긋나면 거의 0
+  'light-reflect': ({ k }) => [pick([430, 12], k)],      // 반사된 빛이 가는 곳만 밝음
   'light-lens': ({ k }) => [pick([480, 4200], k)],
 
   // 용해와 용액 — 녹아도 무게는 같음 / 따뜻한 물에 더 많이 녹음(물 온도 기록)
@@ -66,6 +68,9 @@ const EXP_SIM = {
   'heat-measure': ({ t, k }) => [approach(t, ROOM, pick([ROOM, 17, 45, 2], k), 3)],
   'heat-contact': ({ t }) => [approach(t, 50, 30, 70), approach(t, 10, 30, 70)], // 두 물의 온도가 같아짐
   'heat-move': ({ t }) => [approach(t, ROOM, 72, 35), ROOM + (46 - ROOM) * Math.max(0, 1 - Math.exp(-Math.max(0, t - 18) / 60))], // 먼 곳은 늦게 오름
+  // 대류: 따뜻한 물이 위로 올라가 위쪽이 먼저 따뜻해짐 / 복사: 빛을 받는 곳만 따뜻해짐 (30초 뒤 시작)
+  'heat-convect': ({ t }) => t < 30 ? [15, 15] : [approach(t - 30, 15, 27, 50), 15 + 3 * (1 - Math.exp(-(t - 30) / 240))],
+  'heat-radiate': ({ t }) => t < 30 ? [ROOM, ROOM] : [approach(t - 30, ROOM, ROOM + 14, 90), ROOM + 1.2 * (1 - Math.exp(-(t - 30) / 200))],
   'heat-insulate': ({ t, k }) => [approach(t, 60, ROOM, pick([700, 1000, 1900], k))],
 
   // 산과 염기
@@ -85,10 +90,12 @@ const EXP_SIM = {
   'season-day': ({ t, k }) => [pick([17, 20.5, 22.8, 23.6, 23], k) + 0.0004 * t],
 
   // 물질의 연소 — 산소가 줄어 촛불이 꺼짐(큰 집기병이 더 오래) / 연소 후 이산화 탄소가 늘어남
+  'burn-flame': ({ t, k }) => k === 0 ? [ROOM, 180] : [approach(t, ROOM, 38, 25), 180 + 520 * (1 - Math.exp(-t / 2))], // 탈 때 빛과 열
   'burn-o2': ({ t, k }) => [approach(t, 20.9, 16.4, pick([9, 22], k))],
   'burn-co2': ({ t, k }) => [k === 0 ? 650 : approach(t, 650, 24000, 15)],
 
   // 전기의 이용 — 전지 2개를 직렬로 연결하면 전압·전류가 커지고 전구가 밝아짐 / 전자석이 세짐
+  'elec-circuit': ({ k }) => [pick([0.15, 0, 0], k)],    // 끊어진 곳 없이 연결할 때만 전류가 흐름
   'elec-series': ({ k }) => [pick([1.45, 2.86], k), pick([0.15, 0.21], k)],
   'elec-bright': ({ k }) => [pick([310, 920], k)],
   'elec-magnet': ({ t, k }) => [t >= 1 && t < 6 ? pick([2.4, 4.9], k) : 0],
@@ -98,6 +105,8 @@ const EXP_SIM = {
 const SIM_CHANNEL_NAMES = {
   'heat-contact': [['temp', '따뜻한 물 온도'], ['temp', '차가운 물 온도']],
   'heat-move': [['temp', '가까운 곳 온도'], ['temp', '먼 곳 온도']],
+  'heat-convect': [['temp', '위쪽 물 온도'], ['temp', '아래쪽 물 온도']],
+  'heat-radiate': [['temp', '빛을 받는 곳 온도'], ['temp', '빛을 가린 곳 온도']],
 };
 function simChannels(exp) {
   return SIM_CHANNEL_NAMES[exp.id] || exp.sensors.map(s => [s, SENSOR_TYPES[s].name]);
