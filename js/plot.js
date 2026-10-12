@@ -22,7 +22,8 @@ function fmtTick(v, step) {
 
 /**
  * series: [{ name, color, points: [[x, y], ...], axis: 'right'(오른쪽 y축, 점선), dash: true(점선) }]
- * opts: { xLabel, yLabel, y2Label(오른쪽 y축 이름), width, height, background, empty }
+ * opts: { xLabel, yLabel, y2Label(오른쪽 y축 이름), yRange·y2Range({min, max}: 축 범위를 직접 정함), width, height, background, empty }
+ * 그린 뒤 canvas._plot 에 축 위치·범위를 남겨 축 드래그(enableAxisDrag)에 씀
  */
 function drawPlot(canvas, series, opts = {}) {
   const dpr = window.devicePixelRatio || 1;
@@ -39,7 +40,7 @@ function drawPlot(canvas, series, opts = {}) {
   const textColor = '#475569', gridColor = '#e2e8f0', axisColor = '#94a3b8';
   const dual = series.some(s => s.axis === 'right');
   const pad = { l: 64, r: dual ? 64 : 16, t: series.length > 1 ? 34 : 16, b: 44 };
-  const pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
+  const ph = h - pad.t - pad.b;
 
   // 왼쪽(y)·오른쪽(y2) 축의 범위를 따로 구함
   let xmin = Infinity, xmax = -Infinity;
@@ -53,6 +54,7 @@ function drawPlot(canvas, series, opts = {}) {
   if (!isFinite(rng.left[0])) rng.left = isFinite(rng.right[0]) ? rng.right.slice() : rng.left;
 
   ctx.font = font;
+  canvas._plot = null;
   if (!isFinite(xmin)) {
     ctx.fillStyle = '#94a3b8';
     ctx.textAlign = 'center';
@@ -60,10 +62,25 @@ function drawPlot(canvas, series, opts = {}) {
     return;
   }
   if (opts.xMinZero !== false) xmin = Math.min(0, xmin);
+  const nY = Math.max(3, Math.floor(ph / 45));
+  // 범위를 정했으면 그 범위 그대로, 아니면 데이터에 맞춰 자동
+  const yTicks = ([lo, hi], fixed) => {
+    if (fixed && isFinite(fixed.min) && isFinite(fixed.max) && fixed.max > fixed.min) {
+      const T = niceTicks(fixed.min, fixed.max, nY);
+      const eps = T.step * 1e-6;
+      return { lo: fixed.min, hi: fixed.max, step: T.step, ticks: T.ticks.filter(v => v >= fixed.min - eps && v <= fixed.max + eps), fixed: true };
+    }
+    const yr = hi - lo || Math.abs(hi) * 0.1 || 1;
+    return niceTicks(lo - yr * 0.05, hi + yr * 0.05, nY);
+  };
+  const Y = yTicks(rng.left, opts.yRange);
+  const Y2 = dual && isFinite(rng.right[0]) ? yTicks(rng.right, opts.y2Range) : null;
+  // 눈금 숫자 길이에 맞춰 여백을 잡아 축 이름과 겹치지 않게 함
+  const tickW = T => Math.max(...T.ticks.map(v => ctx.measureText(fmtTick(v, T.step)).width), 10);
+  pad.l = Math.max(52, Math.ceil(tickW(Y)) + 34);
+  if (Y2) pad.r = Math.max(52, Math.ceil(tickW(Y2)) + 34);
+  const pw = w - pad.l - pad.r;
   const X = niceTicks(xmin, xmax === xmin ? xmin + 1 : xmax, Math.max(3, Math.floor(pw / 80)));
-  const yTicks = ([lo, hi]) => { const yr = hi - lo || Math.abs(hi) * 0.1 || 1; return niceTicks(lo - yr * 0.05, hi + yr * 0.05, Math.max(3, Math.floor(ph / 45))); };
-  const Y = yTicks(rng.left);
-  const Y2 = dual && isFinite(rng.right[0]) ? yTicks(rng.right) : null;
   const sx = x => pad.l + (x - X.lo) / (X.hi - X.lo) * pw;
   const sy = y => pad.t + ph - (y - Y.lo) / (Y.hi - Y.lo) * ph;
   const sy2 = y => pad.t + ph - (y - Y2.lo) / (Y2.hi - Y2.lo) * ph;
@@ -107,7 +124,7 @@ function drawPlot(canvas, series, opts = {}) {
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(opts.yLabel, 0, 0); ctx.restore();
   }
   if (Y2 && opts.y2Label) {
-    ctx.save(); ctx.translate(w - 12, pad.t + ph / 2); ctx.rotate(Math.PI / 2);
+    ctx.save(); ctx.translate(w - 14, pad.t + ph / 2); ctx.rotate(Math.PI / 2);
     ctx.fillStyle = (series.find(s => s.axis === 'right') || {}).color || textColor;
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(opts.y2Label, 0, 0); ctx.restore();
   }
@@ -136,6 +153,10 @@ function drawPlot(canvas, series, opts = {}) {
     }
   });
   ctx.restore();
+
+  // 축 드래그·범위 설정에 쓸 정보
+  canvas._plot = { pad, pw, ph, w, h, Y: { lo: Y.lo, hi: Y.hi, fixed: !!Y.fixed }, Y2: Y2 ? { lo: Y2.lo, hi: Y2.hi, fixed: !!Y2.fixed } : null,
+    yLabel: opts.yLabel || '', y2Label: Y2 ? (opts.y2Label || '') : '' };
 
   // 범례
   if (series.length > 1) {
@@ -214,4 +235,54 @@ function runStats(points) {
     first: ys[0], last: ys[n - 1], change: ys[n - 1] - ys[0],
     slope: den ? num / den : 0, duration: pts[n - 1][0] - pts[0][0],
   };
+}
+
+/**
+ * 축 드래그로 범위 바꾸기: 축 숫자 위를 누른 채 위아래로 끌면
+ * - 축의 위쪽 절반을 잡으면 최댓값이, 아래쪽 절반을 잡으면 최솟값이 움직여 잡은 값이 손가락(마우스)을 따라옴
+ * - 축을 두 번 누르면 자동 범위로 돌아감
+ * onChange(side: 'y'|'y2', range|null, label)
+ */
+function enableAxisDrag(canvas, onChange) {
+  if (canvas._axisDrag) return;
+  canvas._axisDrag = true;
+  const zone = e => {
+    const p = canvas._plot;
+    if (!p) return null;
+    const r = canvas.getBoundingClientRect();
+    const x = e.clientX - r.left, y = e.clientY - r.top;
+    if (y < p.pad.t - 6 || y > p.pad.t + p.ph + 6) return null;
+    if (x < p.pad.l) return { side: 'y', ax: p.Y, label: p.yLabel, y, p };
+    if (p.Y2 && x > p.pad.l + p.pw) return { side: 'y2', ax: p.Y2, label: p.y2Label, y, p };
+    return null;
+  };
+  let drag = null;
+  canvas.addEventListener('pointermove', e => {
+    if (drag && !(e.buttons & 1)) drag = null; // 버튼을 뗀 뒤(창 밖에서 뗀 경우 포함)에는 끌기 끝
+    if (!drag) { canvas.style.cursor = zone(e) ? 'ns-resize' : ''; return; }
+    const r = canvas.getBoundingClientRect();
+    const { p, lo, hi, v0, top } = drag;
+    const frac = (p.pad.t + p.ph - (e.clientY - r.top)) / p.ph;
+    let range;
+    if (top) { if (frac < 0.05) return; range = { min: lo, max: lo + (v0 - lo) / frac }; }
+    else { if (frac > 0.95) return; range = { min: (v0 - frac * hi) / (1 - frac), max: hi }; }
+    if (!(range.max > range.min) || !isFinite(range.min) || !isFinite(range.max)) return;
+    onChange(drag.side, range, drag.label);
+  });
+  canvas.addEventListener('pointerdown', e => {
+    const z = zone(e);
+    if (!z) return;
+    e.preventDefault();
+    const { lo, hi } = z.ax;
+    const v0 = lo + (z.p.pad.t + z.p.ph - z.y) / z.p.ph * (hi - lo);
+    drag = { side: z.side, label: z.label, p: z.p, lo, hi, v0, top: v0 > (lo + hi) / 2 };
+    try { canvas.setPointerCapture(e.pointerId); } catch (x) { /* ignore */ }
+  });
+  const end = () => { drag = null; };
+  canvas.addEventListener('pointerup', end);
+  canvas.addEventListener('pointercancel', end);
+  canvas.addEventListener('lostpointercapture', end);
+  window.addEventListener('pointerup', end);
+  canvas.addEventListener('dblclick', e => { const z = zone(e); if (z) onChange(z.side, null, z.label); });
+  canvas.style.touchAction = 'pan-x pan-y';
 }

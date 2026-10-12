@@ -45,7 +45,7 @@ const newState = () => ({
   design: { iv: '', ivLevels: '', dv: '', sensor: '', controls: [''], materials: '', procedure: [''], intervalSec: 1, durationSec: 60, measureMode: 'auto', manualX: '', safety: {}, safetyItems: [], safetyNote: '', appliedExp: '', sensorAlias: ['', ''] },
   data: { runs: [] },
   chat: [],
-  result: { channel: '', channel2: '', hidden: {}, analysis: '', verdict: '', conclusion: '', error: '', reflection: '', ai: null },
+  result: { channel: '', channel2: '', axisRanges: {}, hidden: {}, analysis: '', verdict: '', conclusion: '', error: '', reflection: '', ai: null },
 });
 
 let state = load();
@@ -579,7 +579,7 @@ function viewMeasure() {
         <button class="btn ghost" id="btnUndo" data-action="undoRecord">마지막 기록 지우기</button>
       </div>` : ''}
       <div id="liveTiles" class="tiles"></div>
-      <div class="chart-wrap"><canvas id="liveChart"></canvas></div>
+      <div class="chart-wrap"><canvas id="liveChart"></canvas></div>${axisSetBox('liveChart')}
       ${manual ? '<div id="manualList" class="manual-list"></div>' : '<div class="progress"><div id="progBar"></div></div>'}
     </section>
   </div>
@@ -816,7 +816,7 @@ function viewAnalysis() {
     <div class="card-head"><h3>${support ? '② 조건 확인 데이터 (센서)' : '① 그래프로 비교하기'}</h3>
       ${axisPicker(keys, key)}</div>
     <div class="run-toggles">${state.data.runs.map((run, i) => `<label class="check pill"><input type="checkbox" data-action="toggleRun" data-id="${run.id}" ${r.hidden[run.id] ? '' : 'checked'}><span class="swatch" style="background:${PLOT_COLORS[i % PLOT_COLORS.length]}"></span>${esc(run.label)}</label>`).join('')}</div>
-    <div class="chart-wrap ${support ? '' : 'tall'}"><canvas id="resultChart"></canvas></div>
+    <div class="chart-wrap ${support ? '' : 'tall'}"><canvas id="resultChart"></canvas></div>${axisSetBox('resultChart')}
     <h3>${support ? '센서 데이터 요약' : '② 데이터 요약'}</h3>
     <div class="table-scroll" id="statsBox">${statsBoxHtml()}</div>`
     : `<p class="muted center pad">아직 ${support ? '센서 ' : ''}측정 데이터가 없습니다. <button class="btn small" data-action="goto" data-step="${STEP.measure}">실험 및 측정하러 가기</button></p>`}
@@ -844,7 +844,7 @@ function viewConclusion() {
     ${keys.length ? `
     <div class="card-head"><h3>${observeExp() ? '조건 확인 데이터 (센서)' : '① 측정 결과 다시 보기'}</h3>
       ${axisPicker(keys, key)}</div>
-    <div class="chart-wrap"><canvas id="conclusionChart"></canvas></div>
+    <div class="chart-wrap"><canvas id="conclusionChart"></canvas></div>${axisSetBox('conclusionChart')}
     <div class="table-scroll" id="statsBox">${statsBoxHtml()}</div>`
     : `<p class="muted center pad">아직 측정 데이터가 없습니다. <button class="btn small" data-action="goto" data-step="${STEP.measure}">실험 및 측정하러 가기</button></p>`}
   </section>
@@ -878,7 +878,8 @@ function chartImage(key, w = 760, h = 340) {
   const [n, u] = key.split('|');
   const series = seriesFor(key, false);
   const ax = xAxisFor(series);
-  drawPlot(c, series, { width: w, height: h, background: '#ffffff', xLabel: ax.label, xMinZero: !ax.manual, yLabel: `${n}${u ? ` (${u})` : ''}` });
+  const yLabel = `${n}${u ? ` (${u})` : ''}`;
+  drawPlot(c, series, { width: w, height: h, background: '#ffffff', xLabel: ax.label, xMinZero: !ax.manual, yLabel, yRange: axisRange(yLabel) });
   return c.toDataURL('image/png');
 }
 function viewReport() {
@@ -931,7 +932,7 @@ function viewReport() {
         ${obsChartImages().map(src => `<figure><img src="${src}" alt="관찰 결과 그래프"></figure>`).join('')}
         <h4>3-2. 조건 확인 데이터 (센서)</h4>` : ''}
       ${keys.length && currentKey2() ? (() => { const ds = dualSeries(); const c = document.createElement('canvas');
-        drawPlot(c, ds.series, { width: 760, height: 340, background: '#ffffff', xLabel: xAxisFor(ds.series).label, xMinZero: !xAxisFor(ds.series).manual, yLabel: ds.yLabel, y2Label: ds.y2Label });
+        drawPlot(c, ds.series, { width: 760, height: 340, background: '#ffffff', xLabel: xAxisFor(ds.series).label, xMinZero: !xAxisFor(ds.series).manual, yLabel: ds.yLabel, y2Label: ds.y2Label, yRange: axisRange(ds.yLabel), y2Range: axisRange(ds.y2Label) });
         return `<figure ${observeExp() ? 'class="small-fig"' : ''}><img src="${c.toDataURL('image/png')}" alt="두 측정값 비교 그래프"><figcaption>${ds.same ? `${esc(ds.yLabel)} 함께 보기 (두 번째 항목은 점선)` : `${esc(ds.yLabel)}(왼쪽 축, 실선)과 ${esc(ds.y2Label)}(오른쪽 축, 점선) 함께 보기`}</figcaption></figure>`; })() : ''}
       ${keys.length ? keys.map(k => { const [n, u] = k.split('|'); return `
         <figure ${observeExp() ? 'class="small-fig"' : ''}><img src="${chartImage(k)}" alt="${esc(n)} 그래프"><figcaption>${xAxisFor(seriesFor(k, false)).manual ? '' : '시간에 따른 '}${esc(n)}${u ? ` (${esc(u)})` : ''} 변화</figcaption></figure>
@@ -967,13 +968,57 @@ function drawResult(sel) {
   if (!c) return;
   const { series, yLabel, y2Label } = dualSeries();
   const ax = xAxisFor(series);
-  drawPlot(c, series, { xLabel: ax.label, xMinZero: !ax.manual, yLabel, y2Label });
+  drawPlot(c, series, { xLabel: ax.label, xMinZero: !ax.manual, yLabel, y2Label, yRange: axisRange(yLabel), y2Range: axisRange(y2Label) });
+  afterChart(c);
 }
 function refreshAxisUi() {
   const head = document.querySelector('.axis-pick');
   if (head) head.outerHTML = axisPicker(channelKeys(), currentKey());
   const b = $('#statsBox'); if (b) b.innerHTML = statsBoxHtml();
   drawResult();
+}
+
+/* ───────── 그래프 축 범위 (축 드래그 · 직접 입력) ─────────
+   범위는 축 이름(예: "압력 (kPa)")별로 기억해서 측정·분석·결론·보고서 그래프에 똑같이 씀 */
+function axisRange(label) {
+  const r = label && state.result.axisRanges ? state.result.axisRanges[label] : null;
+  return r && isFinite(r.min) && isFinite(r.max) && r.max > r.min ? r : null;
+}
+function setAxisRange(label, range) {
+  if (!label) return;
+  state.result.axisRanges = state.result.axisRanges || {};
+  if (range) state.result.axisRanges[label] = { min: range.min, max: range.max };
+  else delete state.result.axisRanges[label];
+  save();
+  redrawCharts();
+}
+function redrawCharts() {
+  if ($('#liveChart')) updateLive();
+  if ($('#resultChart')) drawResult('#resultChart');
+  if ($('#conclusionChart')) drawResult('#conclusionChart');
+}
+// 그린 뒤: 축 드래그 연결, 범위 입력 칸 내용 갱신
+function afterChart(c) {
+  enableAxisDrag(c, (side, range, label) => setAxisRange(label, range));
+  const box = document.querySelector(`.axis-set[data-for="${c.id}"]`);
+  if (box && !box.contains(document.activeElement)) box.querySelector('.axis-rows').innerHTML = axisRowsHtml(c);
+}
+function axisSetBox(id) {
+  return `<details class="axis-set" data-for="${id}"><summary>축 범위 직접 정하기</summary>
+    <p class="muted small">축의 숫자 부분을 누른 채 위아래로 끌어도 범위가 바뀌어요. (축을 두 번 누르면 자동 범위)</p>
+    <div class="axis-rows"></div></details>`;
+}
+function axisRowsHtml(c) {
+  const p = c._plot;
+  if (!p) return '<p class="muted small">그래프가 그려지면 설정할 수 있어요.</p>';
+  const nice = v => String(Math.round(v * 1e6) / 1e6);
+  const row = (side, label, ax) => `<div class="axis-row" data-side="${side}" data-label="${esc(label)}">
+      <b>${side === 'y' ? (p.Y2 ? '왼쪽 축' : 'y축') : '오른쪽 축'}</b><span class="muted small">${esc(label || '측정값')}${ax.fixed ? '' : ' · 자동'}</span>
+      <label>최솟값 <input type="number" step="any" data-axmin value="${nice(ax.lo)}"></label>
+      <label>최댓값 <input type="number" step="any" data-axmax value="${nice(ax.hi)}"></label>
+      <button class="btn small primary" data-action="axisApply">적용</button>
+      <button class="btn small ghost" data-action="axisAuto">자동으로</button></div>`;
+  return row('y', p.yLabel, p.Y) + (p.Y2 ? row('y2', p.y2Label, p.Y2) : '');
 }
 
 /* ───────── 다른 수업으로 바꿀 때 이전 탐구 지우기 ───────── */
@@ -1290,7 +1335,9 @@ function updateLive() {
       axis: sp.right(c) ? 'right' : 'left', points: run.rows.map(r => [r[0], r[i + 1] ?? null]) })) : [];
     const manualRun = run && run.mode === 'manual';
     drawPlot(canvas, series, { xLabel: run ? (run.xLabel || '시간 (s)') : '시간 (s)', yLabel: sp.yLabel, y2Label: sp.y2Label, xMinZero: !manualRun,
+      yRange: run ? axisRange(sp.yLabel) : null, y2Range: run ? axisRange(sp.y2Label) : null,
       empty: run ? (manualRun ? '[값 기록]을 누르면 점이 찍혀요' : '데이터 수신 대기 중…') : undefined });
+    afterChart(canvas);
   }
   const ml = $('#manualList');
   if (ml) {
@@ -1726,6 +1773,15 @@ const actions = {
   },
   connect: () => connect(),
   disconnect: async () => { const cur = sd(); if (cur) { cur.userClosed = true; await cur.disconnect(); } refreshBrandPanel(); updateMeasureButtons(); updateLive(); },
+  axisApply: el => {
+    const row = el.closest('.axis-row');
+    const min = Number(row.querySelector('[data-axmin]').value), max = Number(row.querySelector('[data-axmax]').value);
+    if (!isFinite(min) || !isFinite(max) || row.querySelector('[data-axmin]').value === '' || row.querySelector('[data-axmax]').value === '') return toast('최솟값과 최댓값을 숫자로 입력하세요.', 'warn');
+    if (max <= min) return toast('최댓값은 최솟값보다 커야 해요.', 'warn');
+    document.activeElement && document.activeElement.blur();
+    setAxisRange(row.dataset.label, { min, max });
+  },
+  axisAuto: el => { document.activeElement && document.activeElement.blur(); setAxisRange(el.closest('.axis-row').dataset.label, null); },
   pickSlot: el => { if (driver.measuring) return toast('측정 중에는 바꿀 수 없어요.', 'warn'); switchSlot(Number(el.dataset.i)); },
   toggleChannel: el => { const cur = sd(); cur.channels[Number(el.dataset.i)].enabled = el.checked; if (cur.refreshChannels) cur.refreshChannels(); updateLive(); },
   startMeasure: () => startMeasure(),
