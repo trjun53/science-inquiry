@@ -1,6 +1,5 @@
-// AI 피드백 연결 설정 (교사가 한 번만 채움)
-// proxy/claude-proxy-worker.js를 Cloudflare Workers에 배포한 뒤 그 주소를 아래에 넣고 배포하면,
-// 모든 학생 기기에서 API 키 없이 AI 평가를 쓸 수 있습니다. 비워 두면 각 기기의 [AI 설정]에서 입력합니다.
+// AI 연결 설정: 학교 AI 서버(중계 서버) 주소만 넣습니다. API 키는 여기에 넣지 마세요.
+// 키는 Cloudflare 중계 서버(proxy/ai-proxy-worker.js)의 비밀값 UPSTAGE_API_KEY에만 있습니다.
 window.AI_CONFIG = {
-  proxyUrl: '',
+  proxyUrl: 'https://science-ai.seoul-science-inquiry.workers.dev',
 };

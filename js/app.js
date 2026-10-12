@@ -1698,14 +1698,13 @@ const actions = {
   pickExperiment: el => { applyExperiment(el.dataset.exp); save(); render(); },
   aiToggleSettings: () => { ui.aiSettingsOpen = !ui.aiSettingsOpen; const s = $('#aiSettings'); if (s) s.hidden = !ui.aiSettingsOpen; },
   aiSaveSettings: () => {
-    const mode = (document.querySelector('input[name="aimode"]:checked') || {}).value || 'proxy';
-    saveAiSettings({ mode, proxyUrl: $('#aiProxy').value.trim(), apiKey: $('#aiKey').value.trim() });
+    saveAiSettings({ proxyUrl: $('#aiProxy').value.trim() });
     ui.aiSettingsOpen = false; ui.aiError = '';
     refreshAiCard();
     toast('AI 설정을 저장했어요.');
   },
   aiRequest: async () => {
-    if (!aiReady()) { ui.aiSettingsOpen = true; ui.aiError = '먼저 학교 AI 서버 주소나 API 키를 입력하세요.'; return refreshAiCard(); }
+    if (!aiReady()) { ui.aiSettingsOpen = true; ui.aiError = '먼저 학교 AI 서버 주소를 입력하세요.'; return refreshAiCard(); }
     ui.aiBusy = true; ui.aiError = '';
     refreshAiCard();
     try {

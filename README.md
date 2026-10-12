@@ -34,13 +34,13 @@
 
 ## AI 피드백 평가 설정 (교사용)
 
-[결론 및 피드백] 단계의 **AI 평가 받기** 버튼은 Claude(claude-opus-5-5)를 사용합니다. 학생의 실험 설계, 측정 데이터, 결과, 성찰을 교사의 관점에서 영역별로 평가합니다.
+[결론 및 피드백] 단계의 **AI 평가 받기** 버튼은 업스테이지 Solar AI(`solar-pro4`)를 학교 AI 서버(중계 서버)를 거쳐 사용합니다. 학생의 실험 설계, 측정 데이터, 결과, 성찰을 교사의 관점에서 영역별로 평가합니다.
 
 - 영역: 예상과 탐구 질문 / 실험 설계 / 측정과 데이터 / 결과 해석과 결론 / 평가와 성찰
 - 평가 단계: 매우 잘함, 잘함, 보통, 더 노력해요
 - 영역마다 잘한 점과 더 좋아지려면 할 일을 알려 주고, 마지막에 다음 탐구 제안과 교사 참고 사항을 덧붙입니다.
 
-버튼을 누르면 보고서 내용이 Anthropic으로 전송됩니다. 학생 이름 같은 개인정보는 넣지 않습니다. 결과는 참고용이며, 사용한 만큼 Claude API 요금이 발생합니다.
+버튼을 누르면 보고서 내용이 학교 AI 서버를 거쳐 업스테이지로 전송됩니다. 학생 이름 같은 개인정보는 넣지 않습니다. 결과는 참고용입니다.
 
 ### 탐구 도우미 챗봇
 [실험 및 측정]과 [데이터 분석] 단계 오른쪽에 **탐구 도우미**가 있습니다. AI 평가와 같은 연결 설정을 씁니다.
@@ -54,18 +54,21 @@
   - 전화번호·주민등록번호 형태의 글은 보내기 전에 막습니다.
 - **사용 제한**: 질문은 300자 이하로, 4초 간격을 두어야 합니다. 보고서 하나당 30회까지 물을 수 있습니다.
 
-### 방법 1. 학교 AI 서버(프록시) — 학생 기기에 권장
-API 키가 학생 기기에 저장되지 않는 방법입니다.
+### 학교 AI 서버(중계 서버) 설정
+업스테이지 API 키는 **Cloudflare에 둔 중계 서버의 비밀값에만** 저장합니다. 이 앱의 코드(GitHub에 공개됨)와 학생 기기에는 키가 없습니다.
 
-1. [Claude Console](https://console.anthropic.com)에서 API 키를 만듭니다.
-2. [Cloudflare](https://dash.cloudflare.com)에 로그인합니다. **Workers & Pages → Create → Worker**로 새 Worker를 만들고, `proxy/claude-proxy-worker.js` 내용을 붙여 넣어 배포합니다.
-3. Worker의 **Settings → Variables and Secrets**에 아래 두 값을 추가합니다.
-   - `ANTHROPIC_API_KEY`: Secret 유형, 1번에서 만든 API 키
-   - `ALLOWED_ORIGINS`: Text 유형, 이 앱의 주소(예: `https://trjun53.github.io`)
-4. Worker 주소(예: `https://science-ai.○○○.workers.dev`)를 `js/ai-config.js`의 `proxyUrl`에 넣고 다시 배포합니다. 그러면 모든 학생 기기에서 바로 쓸 수 있습니다.
+- 중계 서버 코드: `proxy/ai-proxy-worker.js`, 배포 설정: `proxy/wrangler.toml`
+- 허용한 사이트(`ALLOWED_ORIGINS`: https://trjun53.github.io, http://localhost:8080)에서 온 요청만 받습니다.
+- AI 지시문(평가 규칙·탐구 도우미 안전 규칙)이 서버에 고정되어 있어, 주소를 알아도 일반 AI처럼 쓸 수 없습니다. 앱은 보고서 내용과 질문만 보냅니다.
+- 글자 수, 대화 수, 요청 횟수(접속 주소당 1분 20회)를 제한합니다.
 
-### 방법 2. API 키 직접 입력 — 교사 기기 전용
-앱의 **AI 설정**에서 'API 키 직접 입력'을 고르고 키를 넣습니다. 키는 그 브라우저에만 저장되므로, 학생 기기에서는 사용하지 마세요.
+처음 한 번만 하면 됩니다 (`proxy` 폴더에서):
+1. `npx wrangler login` — Cloudflare 계정으로 로그인
+2. `npx wrangler deploy` — 중계 서버 배포. 주소(예: `https://science-ai.○○○.workers.dev`)가 나옵니다.
+3. `npx wrangler secret put UPSTAGE_API_KEY` — 업스테이지 키를 **교사가 직접** 붙여 넣습니다. 키를 파일에 적지 마세요.
+4. 2번 주소를 `js/ai-config.js`의 `proxyUrl`에 넣고 앱을 다시 배포합니다.
+
+키를 바꿀 때는 3번만 다시 하면 됩니다. 이 저장소에는 커밋 전 검사(`.git/hooks/pre-commit`)가 있어서, API 키처럼 보이는 문자열이 들어간 파일은 커밋되지 않습니다.
 
 ## 실행 방법
 
@@ -118,9 +121,10 @@ js/pasco-sheets.js  PASCO 무선 센서 데이터시트 요약 (PASCO scientific
 js/vendor/          Vernier 공식 라이브러리 godirect-js와 라이선스(BSD-3)
 js/experiments.js   초등 디지털 센서 실험 템플릿 41개 (예상 질문, 변인, 준비물, 과정, 안전 수칙)
 js/plot.js          그래프, 통계
-js/ai.js            AI 피드백 평가 (Claude API, 공식 JS SDK)
+js/ai.js            AI 피드백 · 탐구 도우미 (학교 AI 서버를 거쳐 업스테이지 Solar 사용)
 js/ai-config.js     학교 AI 서버(프록시) 주소 설정
-proxy/claude-proxy-worker.js  학교 AI 서버(Cloudflare Worker) — API 키를 숨기는 프록시
+proxy/ai-proxy-worker.js      학교 AI 서버(Cloudflare Worker) — 업스테이지 키를 숨기고 AI 지시문을 고정한 중계 서버
+proxy/wrangler.toml           중계 서버 배포 설정
 js/app.js           단계별 화면, 측정, 보고서
 server.ps1          로컬 웹 서버 (start-server.bat에서 실행)
 ```

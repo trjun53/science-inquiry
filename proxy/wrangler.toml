@@ -1,0 +1,11 @@
+# 학교 AI 서버(중계 서버) 배포 설정 — Cloudflare Workers
+# 배포:      npx wrangler deploy                 (proxy 폴더에서)
+# 키 등록:   npx wrangler secret put UPSTAGE_API_KEY   ← 교사가 직접 입력. 키를 이 파일이나 다른 파일에 적지 마세요.
+name = "science-ai"
+main = "ai-proxy-worker.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+[vars]
+# 이 주소에서 온 요청만 받음 (쉼표로 구분)
+ALLOWED_ORIGINS = "https://trjun53.github.io,http://localhost:8080"
