@@ -21,8 +21,8 @@ function fmtTick(v, step) {
 }
 
 /**
- * series: [{ name, color, points: [[x, y], ...] }]
- * opts: { xLabel, yLabel, width, height, background, empty }
+ * series: [{ name, color, points: [[x, y], ...], axis: 'right'(오른쪽 y축, 점선), dash: true(점선) }]
+ * opts: { xLabel, yLabel, y2Label(오른쪽 y축 이름), width, height, background, empty }
  */
 function drawPlot(canvas, series, opts = {}) {
   const dpr = window.devicePixelRatio || 1;
@@ -37,15 +37,20 @@ function drawPlot(canvas, series, opts = {}) {
 
   const font = '12px "Noto Sans KR", "Malgun Gothic", sans-serif';
   const textColor = '#475569', gridColor = '#e2e8f0', axisColor = '#94a3b8';
-  const pad = { l: 64, r: 16, t: series.length > 1 ? 34 : 16, b: 44 };
+  const dual = series.some(s => s.axis === 'right');
+  const pad = { l: 64, r: dual ? 64 : 16, t: series.length > 1 ? 34 : 16, b: 44 };
   const pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
 
-  let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
+  // 왼쪽(y)·오른쪽(y2) 축의 범위를 따로 구함
+  let xmin = Infinity, xmax = -Infinity;
+  const rng = { left: [Infinity, -Infinity], right: [Infinity, -Infinity] };
   series.forEach(s => s.points.forEach(([x, y]) => {
     if (y === null || y === undefined || !isFinite(y)) return;
+    const r = rng[s.axis === 'right' ? 'right' : 'left'];
     if (x < xmin) xmin = x; if (x > xmax) xmax = x;
-    if (y < ymin) ymin = y; if (y > ymax) ymax = y;
+    if (y < r[0]) r[0] = y; if (y > r[1]) r[1] = y;
   }));
+  if (!isFinite(rng.left[0])) rng.left = isFinite(rng.right[0]) ? rng.right.slice() : rng.left;
 
   ctx.font = font;
   if (!isFinite(xmin)) {
@@ -55,11 +60,13 @@ function drawPlot(canvas, series, opts = {}) {
     return;
   }
   if (opts.xMinZero !== false) xmin = Math.min(0, xmin);
-  const yr = ymax - ymin || Math.abs(ymax) * 0.1 || 1;
   const X = niceTicks(xmin, xmax === xmin ? xmin + 1 : xmax, Math.max(3, Math.floor(pw / 80)));
-  const Y = niceTicks(ymin - yr * 0.05, ymax + yr * 0.05, Math.max(3, Math.floor(ph / 45)));
+  const yTicks = ([lo, hi]) => { const yr = hi - lo || Math.abs(hi) * 0.1 || 1; return niceTicks(lo - yr * 0.05, hi + yr * 0.05, Math.max(3, Math.floor(ph / 45))); };
+  const Y = yTicks(rng.left);
+  const Y2 = dual && isFinite(rng.right[0]) ? yTicks(rng.right) : null;
   const sx = x => pad.l + (x - X.lo) / (X.hi - X.lo) * pw;
   const sy = y => pad.t + ph - (y - Y.lo) / (Y.hi - Y.lo) * ph;
+  const sy2 = y => pad.t + ph - (y - Y2.lo) / (Y2.hi - Y2.lo) * ph;
 
   // 격자와 눈금
   ctx.lineWidth = 1;
@@ -79,6 +86,17 @@ function drawPlot(canvas, series, opts = {}) {
   });
   ctx.strokeStyle = axisColor;
   ctx.beginPath(); ctx.moveTo(pad.l + 0.5, pad.t); ctx.lineTo(pad.l + 0.5, pad.t + ph); ctx.lineTo(pad.l + pw, pad.t + ph + 0.5); ctx.stroke();
+  // 오른쪽 y축: 눈금 글자는 오른쪽 축 계열의 색으로
+  if (Y2) {
+    const c2 = (series.find(s => s.axis === 'right') || {}).color || textColor;
+    ctx.beginPath(); ctx.moveTo(pad.l + pw + 0.5, pad.t); ctx.lineTo(pad.l + pw + 0.5, pad.t + ph); ctx.stroke();
+    ctx.fillStyle = c2; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    Y2.ticks.forEach(v => {
+      const y = Math.round(sy2(v)) + 0.5;
+      ctx.beginPath(); ctx.moveTo(pad.l + pw, y); ctx.lineTo(pad.l + pw + 4, y); ctx.stroke();
+      ctx.fillText(fmtTick(v, Y2.step), pad.l + pw + 8, y);
+    });
+  }
 
   // 축 이름
   ctx.fillStyle = textColor;
@@ -88,24 +106,32 @@ function drawPlot(canvas, series, opts = {}) {
     ctx.save(); ctx.translate(14, pad.t + ph / 2); ctx.rotate(-Math.PI / 2);
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(opts.yLabel, 0, 0); ctx.restore();
   }
+  if (Y2 && opts.y2Label) {
+    ctx.save(); ctx.translate(w - 12, pad.t + ph / 2); ctx.rotate(Math.PI / 2);
+    ctx.fillStyle = (series.find(s => s.axis === 'right') || {}).color || textColor;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(opts.y2Label, 0, 0); ctx.restore();
+  }
 
   // 데이터 선
   ctx.save();
   ctx.beginPath(); ctx.rect(pad.l, pad.t - 2, pw + 2, ph + 4); ctx.clip();
   series.forEach((s, i) => {
     const color = s.color || PLOT_COLORS[i % PLOT_COLORS.length];
+    const right = s.axis === 'right' && Y2;
+    const fy = right ? sy2 : sy;
     ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 2; ctx.lineJoin = 'round';
+    ctx.setLineDash(right || s.dash ? [6, 4] : []);
     ctx.beginPath();
-    let pen = false;
-    s.points.forEach(([x, y]) => {
-      if (y === null || y === undefined || !isFinite(y)) { pen = false; return; }
-      if (!pen) { ctx.moveTo(sx(x), sy(y)); pen = true; } else ctx.lineTo(sx(x), sy(y));
-    });
+    // 값이 없는 칸(다른 센서만 들어온 시각)은 건너뛰고 이어서 그림
+    const pts = s.points.filter(([, y]) => y !== null && y !== undefined && isFinite(y));
+    pts.forEach(([x, y], k) => { if (!k) ctx.moveTo(sx(x), fy(y)); else ctx.lineTo(sx(x), fy(y)); });
     ctx.stroke();
-    if (s.points.length <= 40) {
-      s.points.forEach(([x, y]) => {
-        if (y === null || !isFinite(y)) return;
-        ctx.beginPath(); ctx.arc(sx(x), sy(y), 3, 0, Math.PI * 2); ctx.fill();
+    ctx.setLineDash([]);
+    if (pts.length <= 40) {
+      pts.forEach(([x, y]) => {
+        ctx.beginPath();
+        if (right) ctx.rect(sx(x) - 3, fy(y) - 3, 6, 6); else ctx.arc(sx(x), fy(y), 3, 0, Math.PI * 2);
+        ctx.fill();
       });
     }
   });
@@ -120,7 +146,8 @@ function drawPlot(canvas, series, opts = {}) {
       const label = s.name || `시행 ${i + 1}`;
       const tw = ctx.measureText(label).width;
       if (x + tw + 26 > w) return;
-      ctx.fillStyle = color; ctx.fillRect(x, 12, 14, 4);
+      ctx.fillStyle = color;
+      if ((s.axis === 'right' && Y2) || s.dash) { ctx.fillRect(x, 12, 5, 4); ctx.fillRect(x + 9, 12, 5, 4); } else ctx.fillRect(x, 12, 14, 4);
       ctx.fillStyle = textColor; ctx.fillText(label, x + 18, 14);
       x += tw + 34;
     });

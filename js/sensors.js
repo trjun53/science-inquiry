@@ -931,6 +931,138 @@ class ScienceCubeDriver extends BaseDriver {
   }
 }
 
+/* ───────────────────────── 센서 2개 동시 사용 ─────────────────────────
+   센서 1·센서 2 자리(slot)에 각각 드라이버를 꽂고, 앱에는 센서 하나처럼 보이게 묶어 줌
+   - 채널 id = 자리×100 + 원래 id, 두 센서의 채널 이름이 같으면 "(센서1)"처럼 구분
+   - 측정값은 같은 측정 간격 칸(시각)끼리 한 줄로 합쳐서 내보냄 */
+class MultiDriver extends BaseDriver {
+  constructor() {
+    super();
+    this.slots = [null, null];
+    this.preview = {};
+    this.pending = new Map(); // 간격 칸 번호 → {values, from:Set}
+  }
+
+  get connected() { return this.slots.some(d => d && d.connected); }
+  set connected(v) { /* BaseDriver 호환용, 자리별 드라이버 상태를 따름 */ }
+  get live() { return this.slots.map((d, i) => (d && d.connected ? i : -1)).filter(i => i >= 0); }
+  get brand() { return this.live.map(i => this.slots[i].brand).join('+'); }
+  get deviceName() { return this.live.map(i => this.slots[i].deviceName).join(' + '); }
+  set deviceName(v) { /* 자리별 드라이버 이름을 따름 */ }
+
+  setSlot(i, d) {
+    const old = this.slots[i];
+    if (old && old !== d && old.connected) old.disconnect().catch(() => {});
+    this.slots[i] = d;
+    if (!d) { this._rebuild(); return; }
+    const mine = () => this.slots[i] === d;
+    d.on('status', msg => { if (mine()) this.emit('status', msg, i); });
+    d.on('raw', r => { if (mine()) this.emit('raw', r, i); });
+    d.on('channels', () => { if (mine()) this._rebuild(); });
+    d.on('preview', v => { if (mine()) this._onPreview(i, v); });
+    d.on('sample', s => { if (mine()) this._onSample(i, s); });
+    d.on('disconnected', () => {
+      if (!mine()) return;
+      Object.keys(this.preview).forEach(k => { if (Math.floor(k / 100) === i) delete this.preview[k]; });
+      this._rebuild();
+      if (this.measuring && !this.live.some(j => this.slots[j].measuring)) this.measuring = false;
+      this.emit('disconnected', i);
+    });
+    this._rebuild();
+  }
+
+  // 두 센서의 채널을 하나의 목록으로 (켜기/끄기는 원래 채널에 그대로 반영)
+  // 이름: 센서 이름(별칭)을 정했으면 그 이름, 센서가 2개면 "온도(센서1)"처럼 번호를 붙임
+  _rebuild() {
+    const list = [];
+    const live = this.live;
+    live.forEach(i => this.slots[i].channels.forEach(c => list.push({ i, c, n: this.slots[i].channels.length })));
+    const named = list.map(({ i, c, n }) => {
+      const alias = String((this.aliasOf && this.aliasOf(i)) || '').trim();
+      if (alias) return n === 1 ? alias : `${alias} ${c.name}`;
+      return live.length > 1 ? `${c.name}(센서${i + 1})` : c.name;
+    });
+    const count = {};
+    named.forEach(x => { count[x] = (count[x] || 0) + 1; });
+    this.channels = list.map(({ i, c }, k) => ({
+      id: i * 100 + c.id, slot: i,
+      name: count[named[k]] > 1 && !named[k].includes(`(센서${i + 1})`) ? `${named[k]}(센서${i + 1})` : named[k],
+      unit: c.unit,
+      get enabled() { return c.enabled; },
+      set enabled(v) { c.enabled = v; },
+    }));
+    this.emit('channels', this.channels);
+  }
+
+  _map(i, values) {
+    const out = {};
+    Object.keys(values).forEach(k => { out[i * 100 + Number(k)] = values[k]; });
+    return out;
+  }
+
+  _onPreview(i, values) {
+    Object.assign(this.preview, this._map(i, values));
+    this.emit('preview', { ...this.preview });
+  }
+
+  _onSample(i, { t, values }) {
+    if (!this.measuring) return;
+    const mapped = this._map(i, values);
+    Object.assign(this.preview, mapped);
+    const active = this.live.filter(j => this.slots[j].measuring);
+    if (active.length <= 1) { this.emit('sample', { t, values: mapped }); return; }
+    const bin = Math.round(t / this.binS);
+    const p = this.pending.get(bin) || { values: {}, from: new Set() };
+    Object.assign(p.values, mapped);
+    p.from.add(i);
+    this.pending.set(bin, p);
+    // 두 센서 값이 모두 모인 칸, 또는 한쪽이 앞서 나가 더는 채워지지 않을 오래된 칸을 차례로 내보냄
+    [...this.pending.keys()].sort((a, b) => a - b).forEach(k => {
+      const q = this.pending.get(k);
+      if (q.from.size >= active.length || k < bin - 1) {
+        this.pending.delete(k);
+        this.emit('sample', { t: Math.round(k * this.binS * 1000) / 1000, values: q.values });
+      }
+    });
+  }
+
+  async start(intervalMs) {
+    const use = this.live.filter(i => this.slots[i].channels.some(c => c.enabled));
+    if (!use.length) throw new Error('측정할 채널을 하나 이상 선택하세요.');
+    this.pending.clear();
+    this.binS = intervalMs / 1000;
+    this.measuring = true;
+    let actual = intervalMs;
+    try {
+      // 두 센서를 거의 동시에 시작
+      const res = await Promise.all(use.map(i => this.slots[i].start(intervalMs)));
+      actual = Math.max(intervalMs, ...res.map(Number).filter(isFinite));
+    } catch (e) {
+      await this.stop();
+      throw e;
+    }
+    this.binS = actual / 1000;
+    return actual;
+  }
+
+  async stop() {
+    // 아직 한쪽 값만 모인 칸도 마저 기록한 뒤 정지
+    [...this.pending.keys()].sort((a, b) => a - b).forEach(k => {
+      this.emit('sample', { t: Math.round(k * this.binS * 1000) / 1000, values: this.pending.get(k).values });
+    });
+    this.pending.clear();
+    this.measuring = false;
+    await Promise.all(this.live.map(i => (this.slots[i].measuring ? this.slots[i].stop().catch(() => {}) : null)));
+  }
+
+  async disconnect() {
+    this.measuring = false;
+    await Promise.all(this.slots.map(d => (d && d.connected ? d.disconnect().catch(() => {}) : null)));
+    this.preview = {};
+    this._rebuild();
+  }
+}
+
 /* ───────────────────────── 시뮬레이션 ───────────────────────── */
 const SIM_MODELS = {
   temp: t => 20 + 45 * (1 - Math.exp(-t / 90)),

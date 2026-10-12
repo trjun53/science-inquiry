@@ -42,15 +42,21 @@ const newState = () => ({
   meta: { level: '', grade: '', semester: '', publisher: '', std: '', group: '', unit: '', customUnit: '', standards: [], lessonNo: 0, lesson: '', customLesson: '', topic: '', name: '', date: today() },
   expId: '',
   question: { observation: '', pre: {}, preReason: '', qIv: '', qDv: '', question: '', hypothesis: '', checks: {} },
-  design: { iv: '', ivLevels: '', dv: '', sensor: '', controls: [''], materials: '', procedure: [''], intervalSec: 1, durationSec: 60, measureMode: 'auto', manualX: '', safety: {}, safetyItems: [], safetyNote: '', appliedExp: '' },
+  design: { iv: '', ivLevels: '', dv: '', sensor: '', controls: [''], materials: '', procedure: [''], intervalSec: 1, durationSec: 60, measureMode: 'auto', manualX: '', safety: {}, safetyItems: [], safetyNote: '', appliedExp: '', sensorAlias: ['', ''] },
   data: { runs: [] },
   chat: [],
-  result: { channel: '', hidden: {}, analysis: '', verdict: '', conclusion: '', error: '', reflection: '', ai: null },
+  result: { channel: '', channel2: '', hidden: {}, analysis: '', verdict: '', conclusion: '', error: '', reflection: '', ai: null },
 });
 
 let state = load();
-const ui = { brand: '', runLabel: '', raw: [], preview: {}, liveQueued: false, activeRunId: null, timer: null, csvMsg: '' };
-let driver = null;
+const ui = { brand: '', runLabel: '', raw: [], preview: {}, liveQueued: false, activeRunId: null, timer: null, csvMsg: '',
+  slot: 0, slots: [{ brand: '', cfg: null, raw: [], csvMsg: '' }, { brand: '', cfg: null, raw: [], csvMsg: '' }] };
+// 센서 1·2를 하나처럼 묶은 드라이버. 연결 화면은 ui.slot 자리의 드라이버(sd())를 다룸
+const driver = new MultiDriver();
+const sd = () => driver.slots[ui.slot];
+// 센서 이름(별칭): "뜨거운 물", "차가운 물"처럼 정하면 측정 항목 이름에 쓰임
+const sensorAlias = i => ((state.design.sensorAlias || [])[i] || '');
+driver.aliasOf = sensorAlias;
 
 /* ───────── 저장 ───────── */
 function load() {
@@ -513,10 +519,12 @@ function viewConnect() {
     ${sensorName ? `<div class="qbanner">실험 설계에서 고른 센서: ${esc(sensorName)} 센서</div>` : ''}</section>
   ${!support && !['sim', 'csv'].includes(ui.brand) ? `<div class="alert">이 브라우저는 Web Bluetooth를 지원하지 않습니다. <b>PC·크롬북·안드로이드의 Chrome 또는 Edge</b>에서 접속하세요. (iPad/iPhone은 Bluefy 브라우저 앱 사용) — 센서 없이 연습하려면 <b>가상 센서</b>를 선택하세요.</div>` : ''}
   ${support && !window.isSecureContext ? `<div class="alert">블루투스는 <b>https://</b> 또는 <b>localhost</b> 주소에서만 동작합니다. start-server.bat로 실행하거나 https로 배포하세요.</div>` : ''}
+  <div class="slot-tabs">${[0, 1].map(i => slotTab(i)).join('')}
+    <p class="muted small">센서를 2개 연결하면 측정 그래프에서 두 값을 왼쪽·오른쪽 세로축(y축 2개)으로 함께 볼 수 있어요.</p></div>
   <div class="sensor-layout">
     <section class="card">
-      <h3>① 센서 제조사 선택</h3>
-      <div class="brands">${BRANDS.map(b => `
+      <h3>① 센서 ${ui.slot + 1}의 제조사 선택</h3>
+      <div class="brands">${BRANDS.filter(b => !(ui.slot === 1 && b.key === 'csv')).map(b => `
         <button class="brand ${ui.brand === b.key ? 'on' : ''}" data-action="pickBrand" data-value="${b.key}" ${driver && driver.measuring ? 'disabled' : ''}>
           <span class="mark" style="background:${b.color}">${b.mark}</span>
           <span class="bname">${b.name}</span><span class="bsub">${b.sub}</span>
@@ -524,7 +532,7 @@ function viewConnect() {
         </button>`).join('')}</div>
     </section>
     <section class="card">
-      <h3>② 연결하고 값 확인하기</h3>
+      <h3>② 센서 ${ui.slot + 1} 연결하고 값 확인하기</h3>
       <div id="brandPanel">${brandPanel()}</div>
       <div id="liveTiles" class="tiles"></div>
     </section>
@@ -596,6 +604,22 @@ function ivLevels() {
   return (state.design.ivLevels || '').split(/[,，\n]/).map(s => s.trim()).filter(Boolean);
 }
 
+function slotTab(i) {
+  const d = driver.slots[i];
+  const on = d && d.connected;
+  const brand = BRANDS.find(b => b.key === (i === ui.slot ? ui.brand : ui.slots[i].brand));
+  const sub = on ? `● ${d.deviceName}` : brand ? `${brand.name} · 연결 안 됨` : (i === 0 ? '연결 안 됨' : '추가로 연결 (선택)');
+  return `<button class="slot-tab ${i === ui.slot ? 'on' : ''} ${on ? 'ok' : ''}" data-action="pickSlot" data-i="${i}"><b>센서 ${i + 1}</b><span>${esc(sub)}</span></button>`;
+}
+// 연결 화면에서 센서 1·2 자리 바꾸기 (자리마다 제조사·설정·원시 데이터를 따로 기억)
+function switchSlot(n) {
+  if (n === ui.slot) return;
+  Object.assign(ui.slots[ui.slot], { brand: ui.brand, cfg: ui.cfg, raw: ui.raw, csvMsg: ui.csvMsg });
+  ui.slot = n;
+  Object.assign(ui, ui.slots[n]);
+  render();
+}
+
 function brandPanel() {
   if (!ui.brand) return '<p class="muted center pad">위에서 사용할 센서 제조사를 선택하세요.</p>';
   const tips = BRAND_TIPS[ui.brand] || [];
@@ -605,7 +629,8 @@ function brandPanel() {
       <label class="file-drop"><input type="file" accept=".csv,.txt" data-action="importCsv"><span>CSV 파일 선택</span></label>
       ${ui.csvMsg ? `<p class="small">${esc(ui.csvMsg)}</p>` : ''}`;
   }
-  const connected = driver && driver.connected && driver.brand === ui.brand;
+  const cur = sd();
+  const connected = cur && cur.connected && cur.brand === ui.brand;
   const simExp = ui.brand === 'sim' && currentExperiment() && typeof EXP_SIM !== 'undefined' && EXP_SIM[currentExperiment().id] ? currentExperiment() : null;
   const simSel = simExp ? `
     <div class="tipbox" style="margin:0 0 12px"><strong>‘${esc(simExp.title)}’ 실험용 가상 데이터</strong>
@@ -620,19 +645,23 @@ function brandPanel() {
     ${simSel}
     <div class="conn-row">
       ${connected
-        ? `<span class="status ok" id="connStatus">● ${esc(driver.deviceName)} 연결됨</span><button class="btn small ghost" data-action="disconnect">연결 해제</button>`
+        ? `<span class="status ok" id="connStatus">● ${esc(cur.deviceName)} 연결됨</span><button class="btn small ghost" data-action="disconnect">연결 해제</button>`
         : `<span class="status" id="connStatus">○ 연결 안 됨</span><button class="btn primary" data-action="connect">${ui.brand === 'sim' ? '가상 센서 켜기' : '블루투스로 연결'}</button>`}
     </div>
+    <label class="field alias-field"><span>센서 ${ui.slot + 1} 이름 <small>(선택) 예: 뜨거운 물, 차가운 물 — 그래프와 표에 이 이름으로 표시돼요</small></span>
+      <input data-alias="${ui.slot}" value="${esc(sensorAlias(ui.slot))}" maxlength="20" placeholder="센서 ${ui.slot + 1}" ${driver.measuring ? 'disabled' : ''}></label>
     <div id="channelBox">${channelBox()}</div>
     ${preset ? `<p class="note">${esc(preset.note)}</p>${decoderPanel()}` : ''}`;
 }
 
 function channelBox() {
-  if (!driver || !driver.connected || driver.brand !== ui.brand) return '';
-  if (!driver.channels.length) return '<p class="muted small">채널 정보를 기다리는 중…</p>';
-  return `<div class="channels"><div class="muted small">측정 채널</div>${driver.channels.map((c, i) => `
+  const cur = sd();
+  if (!cur || !cur.connected || cur.brand !== ui.brand) return '';
+  if (!cur.channels.length) return '<p class="muted small">채널 정보를 기다리는 중…</p>';
+  const shown = c => (driver.channels.find(x => x.id === ui.slot * 100 + c.id) || c).name;
+  return `<div class="channels"><div class="muted small">측정 채널 <span class="slot-badge">센서 ${ui.slot + 1}</span></div>${cur.channels.map((c, i) => `
     <label class="check"><input type="checkbox" data-action="toggleChannel" data-i="${i}" ${c.enabled ? 'checked' : ''} ${driver.measuring ? 'disabled' : ''}>
-    <span>${esc(c.name)} ${c.unit ? `<em>(${esc(c.unit)})</em>` : ''}</span></label>`).join('')}</div>`;
+    <span>${esc(shown(c))} ${c.unit ? `<em>(${esc(c.unit)})</em>` : ''}</span></label>`).join('')}</div>`;
 }
 
 /* 범용 BLE: 데이터 해석 설정 */
@@ -649,7 +678,8 @@ function saveBrandConfig(brand, cfg) {
 function decoderPanel() {
   const cfg = ui.cfg;
   const d = cfg.decoder;
-  const chars = driver && driver.chars && driver.brand === ui.brand ? driver.chars : [];
+  const cur = sd();
+  const chars = cur && cur.chars && cur.brand === ui.brand ? cur.chars : [];
   const bin = d.format === 'binary';
   const types = ['uint8', 'int8', 'uint16', 'int16', 'uint32', 'int32', 'float32', 'fixed16_16'];
   return `
@@ -721,6 +751,41 @@ function seriesFor(key, includeHidden) {
     return { name: r.label, color: PLOT_COLORS[i % PLOT_COLORS.length], run: r, points: r.rows.map(row => [row[0], row[idx + 1] ?? null]) };
   }).filter(Boolean);
 }
+function currentKey2() {
+  const keys = channelKeys();
+  if (state.result.channel2 && (!keys.includes(state.result.channel2) || state.result.channel2 === currentKey())) state.result.channel2 = '';
+  return state.result.channel2 || '';
+}
+function axisPicker(keys, key) {
+  const key2 = currentKey2();
+  const opt = (k, sel) => { const [n, u] = k.split('|'); return `<option value="${esc(k)}" ${k === sel ? 'selected' : ''}>${esc(n)}${u ? ` (${esc(u)})` : ''}</option>`; };
+  const same = key2 && key2.split('|')[1] === key.split('|')[1];
+  return `<div class="axis-pick">
+      <label class="inline-field">${same ? 'y축' : '왼쪽 y축'} <select data-action="pickChannel">${keys.map(k => opt(k, key)).join('')}</select></label>
+      ${keys.length > 1 ? `<label class="inline-field">${same ? '함께 볼 항목(같은 축)' : '오른쪽 y축'} <select data-action="pickChannel2"><option value="">(사용 안 함)</option>${keys.filter(k => k !== key).map(k => opt(k, key2)).join('')}</select></label>` : ''}
+    </div>`;
+}
+function statsBoxHtml(forReport) {
+  const k2 = currentKey2();
+  const name = k => { const [n, u] = k.split('|'); return `${esc(n)}${u ? ` (${esc(u)})` : ''}`; };
+  const same = k2 && k2.split('|')[1] === currentKey().split('|')[1];
+  return k2 ? `<h4 class="axis-h">${same ? '' : '왼쪽 y축: '}${name(currentKey())}</h4>${statsTable(currentKey(), forReport)}<h4 class="axis-h">${same ? '' : '오른쪽 y축: '}${name(k2)}</h4>${statsTable(k2, forReport)}`
+    : statsTable(currentKey(), forReport);
+}
+// 왼쪽 축 항목(실선)과 오른쪽 축 항목(점선)을 한 그래프에
+function dualSeries() {
+  const key = currentKey(), key2 = currentKey2();
+  const nm = k => k.split('|')[0];
+  const left = seriesFor(key, false);
+  if (!key2) return { series: left, yLabel: axisName(key), y2Label: '' };
+  // 단위가 같으면(예: 온도 2개) 같은 눈금에서 비교하도록 한 축에 겹쳐 그림
+  const same = key.split('|')[1] === key2.split('|')[1];
+  const right = seriesFor(key2, false).map(s => ({ ...s, axis: same ? 'left' : 'right', dash: true, name: `${s.name} · ${nm(key2)}` }));
+  const series = [...left.map(s => ({ ...s, name: `${s.name} · ${nm(key)}` })), ...right];
+  if (same) { const u = key.split('|')[1]; return { series, yLabel: `${nm(key)}, ${nm(key2)}${u ? ` (${u})` : ''}`, y2Label: '', same }; }
+  return { series, yLabel: axisName(key), y2Label: axisName(key2) };
+}
+const axisName = k => { const [n, u] = k.split('|'); return `${n}${u ? ` (${u})` : ''}`; };
 function currentKey() {
   const keys = channelKeys();
   if (!keys.includes(state.result.channel)) state.result.channel = keys[0] || '';
@@ -749,11 +814,11 @@ function viewAnalysis() {
     ${support ? '<p class="muted small" style="margin-top:0">아래는 실험 조건을 확인하는 센서 데이터예요.</p>' : ''}
     ${keys.length ? `
     <div class="card-head"><h3>${support ? '② 조건 확인 데이터 (센서)' : '① 그래프로 비교하기'}</h3>
-      <label class="inline-field">측정 항목 <select data-action="pickChannel">${keys.map(k => { const [n, u] = k.split('|'); return `<option value="${esc(k)}" ${k === key ? 'selected' : ''}>${esc(n)}${u ? ` (${esc(u)})` : ''}</option>`; }).join('')}</select></label></div>
+      ${axisPicker(keys, key)}</div>
     <div class="run-toggles">${state.data.runs.map((run, i) => `<label class="check pill"><input type="checkbox" data-action="toggleRun" data-id="${run.id}" ${r.hidden[run.id] ? '' : 'checked'}><span class="swatch" style="background:${PLOT_COLORS[i % PLOT_COLORS.length]}"></span>${esc(run.label)}</label>`).join('')}</div>
     <div class="chart-wrap ${support ? '' : 'tall'}"><canvas id="resultChart"></canvas></div>
     <h3>${support ? '센서 데이터 요약' : '② 데이터 요약'}</h3>
-    <div class="table-scroll" id="statsBox">${statsTable(key)}</div>`
+    <div class="table-scroll" id="statsBox">${statsBoxHtml()}</div>`
     : `<p class="muted center pad">아직 ${support ? '센서 ' : ''}측정 데이터가 없습니다. <button class="btn small" data-action="goto" data-step="${STEP.measure}">실험 및 측정하러 가기</button></p>`}
   </section>
   <section class="card">
@@ -778,9 +843,9 @@ function viewConclusion() {
   <section class="card">
     ${keys.length ? `
     <div class="card-head"><h3>${observeExp() ? '조건 확인 데이터 (센서)' : '① 측정 결과 다시 보기'}</h3>
-      <label class="inline-field">측정 항목 <select data-action="pickChannel">${keys.map(k => { const [n, u] = k.split('|'); return `<option value="${esc(k)}" ${k === key ? 'selected' : ''}>${esc(n)}${u ? ` (${esc(u)})` : ''}</option>`; }).join('')}</select></label></div>
+      ${axisPicker(keys, key)}</div>
     <div class="chart-wrap"><canvas id="conclusionChart"></canvas></div>
-    <div class="table-scroll" id="statsBox">${statsTable(key)}</div>`
+    <div class="table-scroll" id="statsBox">${statsBoxHtml()}</div>`
     : `<p class="muted center pad">아직 측정 데이터가 없습니다. <button class="btn small" data-action="goto" data-step="${STEP.measure}">실험 및 측정하러 가기</button></p>`}
   </section>
   <div class="two-col even">
@@ -865,6 +930,9 @@ function viewReport() {
         ${obsTableHtml(false)}
         ${obsChartImages().map(src => `<figure><img src="${src}" alt="관찰 결과 그래프"></figure>`).join('')}
         <h4>3-2. 조건 확인 데이터 (센서)</h4>` : ''}
+      ${keys.length && currentKey2() ? (() => { const ds = dualSeries(); const c = document.createElement('canvas');
+        drawPlot(c, ds.series, { width: 760, height: 340, background: '#ffffff', xLabel: xAxisFor(ds.series).label, xMinZero: !xAxisFor(ds.series).manual, yLabel: ds.yLabel, y2Label: ds.y2Label });
+        return `<figure ${observeExp() ? 'class="small-fig"' : ''}><img src="${c.toDataURL('image/png')}" alt="두 측정값 비교 그래프"><figcaption>${ds.same ? `${esc(ds.yLabel)} 함께 보기 (두 번째 항목은 점선)` : `${esc(ds.yLabel)}(왼쪽 축, 실선)과 ${esc(ds.y2Label)}(오른쪽 축, 점선) 함께 보기`}</figcaption></figure>`; })() : ''}
       ${keys.length ? keys.map(k => { const [n, u] = k.split('|'); return `
         <figure ${observeExp() ? 'class="small-fig"' : ''}><img src="${chartImage(k)}" alt="${esc(n)} 그래프"><figcaption>${xAxisFor(seriesFor(k, false)).manual ? '' : '시간에 따른 '}${esc(n)}${u ? ` (${esc(u)})` : ''} 변화</figcaption></figure>
         ${statsTable(k, true)}`; }).join('') : '<p><span class="blank">(측정 데이터 없음)</span></p>'}
@@ -897,11 +965,15 @@ function xAxisFor(series) {
 function drawResult(sel) {
   const c = $(sel || '#resultChart') || $('#conclusionChart');
   if (!c) return;
-  const key = currentKey();
-  const [n, u] = key.split('|');
-  const series = seriesFor(key, false);
+  const { series, yLabel, y2Label } = dualSeries();
   const ax = xAxisFor(series);
-  drawPlot(c, series, { xLabel: ax.label, xMinZero: !ax.manual, yLabel: `${n}${u ? ` (${u})` : ''}` });
+  drawPlot(c, series, { xLabel: ax.label, xMinZero: !ax.manual, yLabel, y2Label });
+}
+function refreshAxisUi() {
+  const head = document.querySelector('.axis-pick');
+  if (head) head.outerHTML = axisPicker(channelKeys(), currentKey());
+  const b = $('#statsBox'); if (b) b.innerHTML = statsBoxHtml();
+  drawResult();
 }
 
 /* ───────── 다른 수업으로 바꿀 때 이전 탐구 지우기 ───────── */
@@ -1152,14 +1224,15 @@ async function chatSend(text) {
 const activeRun = () => state.data.runs.find(r => r.id === ui.activeRunId);
 
 function attachDriver(d) {
-  driver = d;
-  d.on('status', msg => { const el = $('#connStatus'); if (el) el.textContent = '… ' + msg; });
+  d.on('status', (msg, i) => { const el = $('#connStatus'); if (el && i === ui.slot) el.textContent = '… ' + msg; });
   d.on('channels', () => {
     const run = activeRun();
     if (run && d.measuring) {
       d.channels.filter(c => c.enabled && !run.channels.some(rc => rc.id === c.id)).forEach(c => run.channels.push({ id: c.id, name: c.name, unit: c.unit }));
     }
     const box = $('#channelBox'); if (box) box.innerHTML = channelBox();
+    document.querySelectorAll('[data-action="pickSlot"]').forEach(b => { b.outerHTML = slotTab(Number(b.dataset.i)); });
+    updateLive();
   });
   d.on('sample', ({ t, values }) => {
     const run = activeRun();
@@ -1178,16 +1251,18 @@ function attachDriver(d) {
     if (dur > 0 && t >= dur) stopMeasure();
   });
   d.on('preview', values => { ui.preview = values; queueLive(); });
-  d.on('raw', ({ uuid, bytes }) => {
+  d.on('raw', ({ uuid, bytes }, i) => {
     const line = `${new Date().toLocaleTimeString('ko-KR', { hour12: false })}  ${shortUuid(uuid)}  ${toHex(bytes)}  |${toAscii(bytes)}|`;
-    ui.raw.push(line);
-    if (ui.raw.length > 30) ui.raw.shift();
+    const raw = i === ui.slot ? ui.raw : ui.slots[i].raw;
+    raw.push(line);
+    if (raw.length > 30) raw.shift();
     const el = $('#rawLog');
-    if (el && el.closest('details').open) { el.textContent = rawText(); el.scrollTop = el.scrollHeight; }
+    if (el && i === ui.slot && el.closest('details').open) { el.textContent = rawText(); el.scrollTop = el.scrollHeight; }
   });
-  d.on('disconnected', () => {
-    if (ui.activeRunId) finishRun();
-    if (!d.userClosed) toast('센서 연결이 끊어졌습니다. 전원과 거리를 확인한 뒤 다시 연결하세요.', 'warn');
+  d.on('disconnected', i => {
+    if (ui.activeRunId && !d.measuring) finishRun();
+    const sl = d.slots[i];
+    if (sl && !sl.userClosed) toast(`센서 ${i + 1} 연결이 끊어졌습니다. 전원과 거리를 확인한 뒤 다시 연결하세요.`, 'warn');
     refreshBrandPanel();
     updateMeasureButtons();
   });
@@ -1204,16 +1279,17 @@ function updateLive() {
   if (!tiles) return;
   const chans = driver && driver.connected ? driver.channels.filter(c => c.enabled) : [];
   tiles.innerHTML = chans.length ? chans.map(c => `
-    <div class="tile"><div class="t-name">${esc(c.name)}</div><div class="t-val">${fmt(ui.preview[c.id], 3)}<small>${esc(c.unit)}</small></div></div>`).join('')
+    <div class="tile"><div class="t-name">${driver.live.length > 1 ? `<span class="slot-badge">센서 ${c.slot + 1}</span> ` : ''}${esc(c.name)}</div><div class="t-val">${fmt(ui.preview[c.id], 3)}<small>${esc(c.unit)}</small></div></div>`).join('')
     : '<div class="tile empty">센서를 연결하면 실시간 값이 표시됩니다</div>';
 
   const run = activeRun() || (ui.showRunId && state.data.runs.find(r => r.id === ui.showRunId));
   const canvas = $('#liveChart');
   if (canvas) {
-    const series = run ? run.channels.map((c, i) => ({ name: `${c.name}${c.unit ? ` (${c.unit})` : ''}`, color: PLOT_COLORS[i % PLOT_COLORS.length], points: run.rows.map(r => [r[0], r[i + 1] ?? null]) })) : [];
-    const yLabel = run && run.channels.length === 1 ? `${run.channels[0].name}${run.channels[0].unit ? ` (${run.channels[0].unit})` : ''}` : '측정값';
+    const sp = run ? splitAxes(run.channels) : { right: () => false, yLabel: '측정값', y2Label: '' };
+    const series = run ? run.channels.map((c, i) => ({ name: `${c.name}${c.unit ? ` (${c.unit})` : ''}`, color: PLOT_COLORS[i % PLOT_COLORS.length],
+      axis: sp.right(c) ? 'right' : 'left', points: run.rows.map(r => [r[0], r[i + 1] ?? null]) })) : [];
     const manualRun = run && run.mode === 'manual';
-    drawPlot(canvas, series, { xLabel: run ? (run.xLabel || '시간 (s)') : '시간 (s)', yLabel, xMinZero: !manualRun,
+    drawPlot(canvas, series, { xLabel: run ? (run.xLabel || '시간 (s)') : '시간 (s)', yLabel: sp.yLabel, y2Label: sp.y2Label, xMinZero: !manualRun,
       empty: run ? (manualRun ? '[값 기록]을 누르면 점이 찍혀요' : '데이터 수신 대기 중…') : undefined });
   }
   const ml = $('#manualList');
@@ -1234,6 +1310,17 @@ function updateLive() {
   if (list && activeRun() && !list.contains(document.activeElement)) list.innerHTML = runList();
 }
 
+// 한 측정에 단위가 다른 값이 함께 있으면 두 번째 단위의 값들을 오른쪽 y축으로
+function splitAxes(chans) {
+  const units = [...new Set(chans.map(c => c.unit))];
+  const label = list => (list.length === 1 ? `${list[0].name}${list[0].unit ? ` (${list[0].unit})` : ''}`
+    : `${list.map(c => c.name).join(', ')}${list[0] && list[0].unit ? ` (${list[0].unit})` : ''}`);
+  if (units.length < 2) return { right: () => false, yLabel: chans.length ? label(chans) : '측정값', y2Label: '' };
+  const r = units[1];
+  const left = chans.filter(c => c.unit !== r), right = chans.filter(c => c.unit === r);
+  return { right: c => c.unit === r, yLabel: units.length > 2 ? '측정값' : label(left), y2Label: label(right) };
+}
+
 function updateMeasureButtons() {
   const s = $('#btnStart'), p = $('#btnStop');
   if (!s) return;
@@ -1252,9 +1339,9 @@ async function startMeasure() {
   if (!driver || !driver.connected) return toast('먼저 센서를 연결하세요.', 'warn');
   const label0 = ($('#runLabel').value || '').trim();
   if (label0) ui.runLabel = label0;
-  applySimExperiment(driver); // 실험을 바꿨을 수도 있으니 측정 직전에 다시 맞춤
+  driver.slots.forEach(d => applySimExperiment(d)); // 실험을 바꿨을 수도 있으니 측정 직전에 다시 맞춤
   const chans = driver.channels.filter(c => c.enabled);
-  if (!chans.length && driver.brand === 'vernier') return toast('측정할 채널을 선택하세요.', 'warn');
+  if (!chans.length) return toast('측정할 채널을 선택하세요.', 'warn');
   const label = ($('#runLabel').value || '').trim() || `시행 ${state.data.runs.length + 1}`;
   const manual = state.design.measureMode === 'manual';
   // 수동 기록은 화면 값을 0.2초마다 갱신하고, 기록은 버튼으로만 함
@@ -1262,6 +1349,10 @@ async function startMeasure() {
   const run = { id: uid(), label, brand: driver.brand, device: driver.deviceName, channels: chans.map(c => ({ id: c.id, name: c.name, unit: c.unit })), rows: [], createdAt: Date.now(),
     mode: manual ? 'manual' : 'auto', xLabel: manual ? (state.design.manualX.trim() || '기록 번호') : '시간 (s)', notes: [] };
   state.data.runs.push(run);
+  // 센서 2개로 처음 측정하면 분석 그래프에 두 센서 값을 함께 보이게 맞춰 둠
+  // (단위가 다르면 왼쪽·오른쪽 y축, 온도 2개처럼 단위가 같으면 한 축에 겹쳐 그림)
+  const s2 = chans.find(c => c.slot === 1), s1 = chans.find(c => c.slot === 0);
+  if (s1 && s2 && !state.result.channel2) { state.result.channel = `${s1.name}|${s1.unit}`; state.result.channel2 = `${s2.name}|${s2.unit}`; }
   ui.activeRunId = run.id;
   ui.showRunId = null;
   ui.latestAt = 0;
@@ -1328,6 +1419,7 @@ function finishRun() {
   ui.runLabel = levels.find(l => !doneLabels.includes(l)) || `시행 ${state.data.runs.length + 1}`;
   const input = $('#runLabel'); if (input) input.value = ui.runLabel;
   const list = $('#runList'); if (list) list.innerHTML = runList();
+  const cnt = document.querySelector('.card-head .count'); if (cnt) cnt.textContent = state.data.runs.length;
   const box = $('#channelBox'); if (box) box.innerHTML = channelBox();
   updateMeasureButtons();
   updateLive();
@@ -1353,7 +1445,10 @@ function applySimExperiment(d) {
 }
 
 async function connect() {
-  if (driver && driver.connected) await driver.disconnect();
+  if (driver.measuring) return toast('측정 중에는 센서를 새로 연결할 수 없어요. 먼저 정지하세요.', 'warn');
+  const slot = ui.slot;
+  const old = driver.slots[slot];
+  if (old && old.connected) await old.disconnect();
   let d;
   if (ui.brand === 'vernier') d = new VernierDriver();
   else if (ui.brand === 'sim') d = new SimulationDriver(state.design.sensor || recSensors()[0] || 'temp');
@@ -1362,11 +1457,11 @@ async function connect() {
   else d = new GenericBleDriver(ui.brand, ui.cfg);
   if (ui.brand !== 'sim' && !('bluetooth' in navigator)) return toast('이 브라우저는 블루투스를 지원하지 않습니다. Chrome 또는 Edge를 사용하세요.', 'warn');
   ui.raw = [];
-  attachDriver(d);
+  driver.setSlot(slot, d);
   applySimExperiment(d);
   try {
     await d.connect();
-    toast(`${d.deviceName} 연결 완료`);
+    toast(`센서 ${slot + 1}: ${d.deviceName} 연결 완료`);
   } catch (e) {
     if (e && e.name === 'NotFoundError') toast('기기 선택이 취소되었습니다.');
     else toast('연결 실패: ' + (e.message || e), 'warn');
@@ -1380,6 +1475,7 @@ async function connect() {
 function refreshBrandPanel() {
   const p = $('#brandPanel');
   if (p) p.innerHTML = brandPanel();
+  document.querySelectorAll('[data-action="pickSlot"]').forEach(b => { b.outerHTML = slotTab(Number(b.dataset.i)); });
   const c = $('#connBar');
   if (c) c.innerHTML = connBar();
 }
@@ -1618,7 +1714,8 @@ const actions = {
   pickBrand: async el => {
     const b = el.dataset.value;
     if (ui.brand === b) return;
-    if (driver && driver.connected && driver.brand !== b) await driver.disconnect();
+    const cur = sd();
+    if (cur && cur.connected && cur.brand !== b) await cur.disconnect();
     ui.brand = b;
     ui.cfg = BRAND_PRESETS[b] ? getBrandConfig(b) : null;
     ui.raw = [];
@@ -1628,8 +1725,9 @@ const actions = {
     updateLive();
   },
   connect: () => connect(),
-  disconnect: async () => { await driver.disconnect(); refreshBrandPanel(); updateMeasureButtons(); updateLive(); },
-  toggleChannel: el => { driver.channels[Number(el.dataset.i)].enabled = el.checked; if (driver.refreshChannels) driver.refreshChannels(); updateLive(); },
+  disconnect: async () => { const cur = sd(); if (cur) { cur.userClosed = true; await cur.disconnect(); } refreshBrandPanel(); updateMeasureButtons(); updateLive(); },
+  pickSlot: el => { if (driver.measuring) return toast('측정 중에는 바꿀 수 없어요.', 'warn'); switchSlot(Number(el.dataset.i)); },
+  toggleChannel: el => { const cur = sd(); cur.channels[Number(el.dataset.i)].enabled = el.checked; if (cur.refreshChannels) cur.refreshChannels(); updateLive(); },
   startMeasure: () => startMeasure(),
   stopMeasure: () => stopMeasure(),
   showRun: el => { ui.showRunId = el.dataset.id; updateLive(); $('#liveChart').scrollIntoView({ behavior: 'smooth', block: 'center' }); },
@@ -1647,7 +1745,7 @@ const actions = {
   saveConfig: () => {
     readDecoderForm();
     saveBrandConfig(ui.brand, ui.cfg);
-    if (driver && driver.brand === ui.brand && driver.applyDecoder) driver.applyDecoder(ui.cfg.decoder);
+    if (sd() && sd().brand === ui.brand && sd().applyDecoder) sd().applyDecoder(ui.cfg.decoder);
     ui.advOpen = true; refreshBrandPanel(); updateLive();
     toast('설정을 저장했습니다. 이름 필터·서비스 UUID 변경은 다시 연결할 때 적용됩니다.');
   },
@@ -1655,13 +1753,14 @@ const actions = {
     if (!confirm('이 제조사의 데이터 해석 설정을 기본값으로 되돌릴까요?')) return;
     localStorage.removeItem('sensor-config-' + ui.brand);
     ui.cfg = getBrandConfig(ui.brand);
-    if (driver && driver.brand === ui.brand && driver.applyDecoder) { driver.config = ui.cfg; driver.applyDecoder(ui.cfg.decoder); }
+    if (sd() && sd().brand === ui.brand && sd().applyDecoder) { sd().config = ui.cfg; sd().applyDecoder(ui.cfg.decoder); }
     ui.advOpen = true; refreshBrandPanel();
   },
-  pickChannel: el => { state.result.channel = el.value; save(); $('#statsBox').innerHTML = statsTable(el.value); drawResult(); },
+  pickChannel: el => { state.result.channel = el.value; currentKey2(); save(); refreshAxisUi(); },
+  pickChannel2: el => { state.result.channel2 = el.value; save(); refreshAxisUi(); },
   toggleRun: el => {
     state.result.hidden[el.dataset.id] = !el.checked;
-    save(); $('#statsBox').innerHTML = statsTable(currentKey()); drawResult();
+    save(); $('#statsBox').innerHTML = statsBoxHtml(); drawResult();
   },
   print: () => window.print(),
   saveJson: () => download(`탐구보고서_${state.meta.name || '학생'}_${state.meta.date || today()}.json`, JSON.stringify(state, null, 1), 'application/json'),
@@ -1709,10 +1808,11 @@ document.addEventListener('click', e => {
 document.addEventListener('change', e => {
   const el = e.target;
   const a = el.dataset.action;
-  if (a === 'toggleChannel' || a === 'toggleRun' || a === 'toggleStd' || a === 'pickChannel') return actions[a](el);
+  if (a === 'toggleChannel' || a === 'toggleRun' || a === 'toggleStd' || a === 'pickChannel' || a === 'pickChannel2') return actions[a](el);
   if (a === 'simSensor') {
     state.design.sensor = el.value; save();
-    if (driver && driver.brand === 'sim') { driver.setSensor(el.value); updateLive(); }
+    driver.slots.forEach(d => { if (d && d.brand === 'sim' && !d.measuring) d.setSensor(el.value); });
+    updateLive();
     return;
   }
   if (a === 'importCsv' && el.files[0]) {
@@ -1746,6 +1846,13 @@ document.addEventListener('input', e => {
   if (el.matches('[data-bind]') && el.type !== 'checkbox' && el.type !== 'radio') onBind(el);
   if (el.matches('textarea.auto')) autosize(el);
   if (el.id === 'runLabel') ui.runLabel = el.value;
+  if (el.dataset.alias !== undefined) {
+    const al = Array.isArray(state.design.sensorAlias) ? state.design.sensorAlias : ['', ''];
+    al[Number(el.dataset.alias)] = el.value;
+    state.design.sensorAlias = al;
+    save();
+    driver._rebuild(); // 채널 이름 바로 반영
+  }
   if (el.id === 'chatInput') ui.chatDraft = el.value;
   if (el.dataset.obs) {
     const o = obsData(), [ri, ci] = el.dataset.obs.split('.').map(Number);
@@ -1805,7 +1912,7 @@ function onBind(el) {
     // 측정 화면과 설계 화면의 같은 입력 동기화
     document.querySelectorAll(`[data-bind="${path}"]`).forEach(x => { if (x !== el) x.value = el.value; });
   }
-  if (path === 'design.sensor' && driver && driver.brand === 'sim' && !driver.measuring) driver.setSensor(v);
+  if (path === 'design.sensor') driver.slots.forEach(d => { if (d && d.brand === 'sim' && !d.measuring) d.setSensor(v); });
 }
 
 window.addEventListener('resize', () => {
@@ -1819,4 +1926,5 @@ window.addEventListener('beforeunload', e => {
   if (driver && driver.measuring) { e.preventDefault(); e.returnValue = ''; }
 });
 
+attachDriver(driver);
 render();
