@@ -60,7 +60,7 @@
 - 중계 서버 코드: `proxy/ai-proxy-worker.js`, 배포 설정: `proxy/wrangler.toml`
 - 허용한 사이트(`ALLOWED_ORIGINS`: https://trjun53.github.io, http://localhost:8080)에서 온 요청만 받습니다.
 - AI 지시문(평가 규칙·탐구 도우미 안전 규칙)이 서버에 고정되어 있어, 주소를 알아도 일반 AI처럼 쓸 수 없습니다. 앱은 보고서 내용과 질문만 보냅니다.
-- 글자 수, 대화 수, 요청 횟수(접속 주소당 1분 20회)를 제한합니다.
+- 글자 수, 대화 수, 요청 횟수(접속 주소당 1분 100회 — 학교는 반 전체가 같은 주소를 씀)를 제한합니다.
 
 처음 한 번만 하면 됩니다 (`proxy` 폴더에서):
 1. `npx wrangler login` — Cloudflare 계정으로 로그인
