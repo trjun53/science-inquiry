@@ -13,7 +13,7 @@ const STEPS = [
 ];
 const STEP = Object.fromEntries(STEPS.map((s, i) => [s.key, i]));
 const BRANDS = [
-  { key: 'pasco', name: 'PASCO', sub: '파스코 무선 센서', mark: 'P', color: '#0067b1', badge: '범용 BLE · 형식 확인 필요' },
+  { key: 'pasco', name: 'PASCO', sub: '파스코 무선 센서', mark: 'P', color: '#0067b1', badge: '자동 인식' },
   { key: 'vernier', name: 'Vernier', sub: '버니어 Go Direct', mark: 'V', color: '#d1342f', badge: '자동 인식' },
   { key: 'sciencecube', name: '사이언스큐브', sub: 'ScienceCube', mark: 'S', color: '#0f9d58', badge: '범용 BLE' },
   { key: 'easymaker', name: '이지메이커', sub: 'EasyMaker', mark: 'E', color: '#f08c00', badge: '범용 BLE' },
@@ -22,8 +22,8 @@ const BRANDS = [
 ];
 const BRAND_TIPS = {
   vernier: ['센서의 전원 버튼을 눌러 빨간 LED가 깜빡이는지 확인하세요.', '목록에서 GDX-로 시작하는 이름(예: GDX-TMP 0F1…)을 선택합니다.', '센서 안에 여러 채널이 있으면 자동으로 표시됩니다. 측정할 채널을 체크하세요.'],
-  pasco: ['센서 전원을 켜고 초록/파란 LED가 깜빡이는지 확인하세요.', '목록에서 센서 본체에 적힌 6자리 ID(예: 123-456)가 포함된 이름을 선택합니다.', '처음 사용할 때는 아래 [원시 데이터]를 보며 데이터 형식을 확인하세요.'],
-  sciencecube: ['센서 전원을 켜고 블루투스 모드인지 확인하세요.', '목록에서 사이언스큐브 센서 이름을 선택합니다. (보이지 않으면 [데이터 해석 설정]에서 "모든 기기 표시"를 켜세요)', '숫자 텍스트로 전송되는 경우 바로 측정됩니다.'],
+  pasco: ['센서 전원을 켜고 초록/파란 LED가 깜빡이는지 확인하세요.', '목록에서 센서 본체에 적힌 6자리 ID(예: 123-456)가 포함된 이름을 선택합니다.', '연결되면 센서 종류를 자동으로 알아내고 실시간 값이 바로 표시됩니다. SPARKvue 등 다른 앱이나 다른 컴퓨터에 연결되어 있으면 먼저 끊으세요.'],
+  sciencecube: ['센서 전원을 켜고 블루투스 모드인지 확인하세요. 사이언스큐브 앱이나 태블릿·휴대폰에 연결되어 있으면 목록에 나타나지 않으니 먼저 연결을 끊으세요.', '[블루투스로 연결]을 누르면 주변의 모든 블루투스 기기가 표시됩니다. 센서를 켜고 끄면서 새로 나타나는 이름을 고르세요.', '목록에 끝내 나타나지 않으면 블루투스 클래식(구형) 방식 센서일 수 있습니다. 이때는 사이언스큐브 앱에서 측정한 뒤 [파일 가져오기]로 CSV를 불러오세요.'],
   easymaker: ['보드에 전원을 연결하고 BLE 시리얼 코드가 업로드되어 있는지 확인하세요.', '보드는 "23.5" 또는 "23.5,45.1" 형태로 한 줄씩 보내면 됩니다.', 'Nordic UART, HM-10(FFE0), ESP32 예제 UUID를 자동으로 찾습니다.'],
   sim: ['실제 센서 없이 측정 흐름을 연습하는 가상 센서입니다.', '실험 설계에서 고른 측정 센서 종류에 맞는 그럴듯한 데이터가 만들어집니다.'],
   csv: ['SPARKvue, Graphical Analysis, 사이언스큐브 앱 등에서 내보낸 CSV 파일을 불러옵니다.', '첫 열(또는 "시간/Time" 열)을 시간으로, 나머지 열을 측정값으로 인식합니다.'],
@@ -1357,6 +1357,7 @@ async function connect() {
   let d;
   if (ui.brand === 'vernier') d = new VernierDriver();
   else if (ui.brand === 'sim') d = new SimulationDriver(state.design.sensor || recSensors()[0] || 'temp');
+  else if (ui.brand === 'pasco') d = new PascoDriver(ui.cfg);
   else d = new GenericBleDriver(ui.brand, ui.cfg);
   if (ui.brand !== 'sim' && !('bluetooth' in navigator)) return toast('이 브라우저는 블루투스를 지원하지 않습니다. Chrome 또는 Edge를 사용하세요.', 'warn');
   ui.raw = [];

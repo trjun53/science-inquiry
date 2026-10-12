@@ -242,14 +242,14 @@ const BRAND_PRESETS = {
     namePrefixes: ['Temperature', 'Temp', 'Force', 'Voltage', 'Current', 'Light', 'pH', 'CO2', 'O2', 'Pressure',
       'Weather', 'Motion', 'Magnetic', 'Conductivity', 'Accel', 'Rotary', 'Load Cell', 'Drop Counter', 'Smart Cart',
       'Sound', 'Optical DO', '//control.Node', '//code.Node', 'Diffraction'],
-    services: [0, 1, 2, 3, 4, 5].map(s => pascoUuid(s, 0)),
+    services: [0, 1, 2, 3, 4, 5, 6, 7].map(s => pascoUuid(s, 0)),
     decoder: {
       format: 'binary', listen: pascoUuid(1, 3),
       fields: [{ name: '측정값', unit: '', offset: 1, type: 'fixed16_16', le: true, scale: 1, add: 0 }],
       startChar: '', startHex: '', stopChar: '', stopHex: '',
       pollChar: pascoUuid(1, 2), pollHex: '05 04',
     },
-    note: 'PASCO 센서는 기종마다 데이터 형식(데이터시트)이 다릅니다. 연결 후 [원시 데이터]를 보며 형식을 맞춰 주세요. 기본값은 1번 채널에 1회 측정 요청(05 04)을 보내고 응답의 2번째 바이트부터 16.16 고정소수점으로 읽습니다.',
+    note: 'PASCO 공식 통신 방식으로 기기 이름에서 센서 종류(온도, 압력, 전압, 전류, pH, 이산화 탄소, 산소, 빛, 힘, 자기장 등)를 알아내고, 기종별 보정식으로 값을 계산합니다. 압력은 kPa로 표시합니다. 아래 설정은 종류를 알 수 없는 기기에만 쓰입니다.',
   },
   sciencecube: {
     label: '사이언스큐브',
@@ -450,6 +450,268 @@ class GenericBleDriver extends BaseDriver {
     clearInterval(this.pollTimer);
     const d = this.config.decoder;
     if (d.stopHex && this.connected) await this._write(d.stopChar, d.stopHex).catch(() => {});
+  }
+}
+
+/* ───────────────────────── PASCO 무선 센서 ─────────────────────────
+   PASCO 공식 Python 라이브러리(pasco)의 통신 방식을 그대로 따름
+   - 기기 이름 "Pressure 788-004>38" → '>' 다음 글자로 기종(인터페이스 ID) 확인
+   - 센서 채널 n마다 서비스 n+1의 특성 2에 [0x05, 데이터 크기]를 써서 1회 측정을 요청
+   - 응답 [C0 00 05 원시값…]을 데이터시트(pasco-sheets.js)의 보정식으로 실제 값으로 바꿈 */
+const PASCO_KO = {
+  Temperature: '온도', Pressure: '압력', Voltage: '전압', Current: '전류', pH: 'pH', Conductivity: '전기 전도도',
+  CO2Concentration: '이산화 탄소 농도', OxygenGasConcentration: '산소 농도', Illuminance: '조도', White: '빛의 세기',
+  Force: '힘', AccelerationResultant: '가속도', Accelerationx: '가속도 x', Accelerationy: '가속도 y', Accelerationz: '가속도 z',
+  Position: '거리', MagFieldResultant: '자기장 세기', MagFieldX: '자기장 x', MagFieldY: '자기장 y', MagFieldZ: '자기장 z',
+  RelativeHumidity: '상대 습도', AbsoluteHumidity: '절대 습도', BarometricPressure: '기압', WindSpeed: '풍속', DewPoint: '이슬점',
+  SoundLevelA: '소리 크기(A)', SoundLevelC: '소리 크기(C)', TotalDissolvedSolids: '총 용존 고형물', DissolvedOxygen: '용존 산소',
+  HeartRate: '심박수', Drops: '물방울 수', VWCLoam: '토양 수분', UVIndex: '자외선 지수', SolarIrradiance: '일사량',
+};
+const PASCO_UNITS = {
+  DegC: '°C', psi: 'kPa', ms2: 'm/s²', percent: '%', pph: '%', utesla: 'µT', uSpcm: 'µS/cm', gpm3: 'g/m³', ugpm3: 'µg/m³',
+  mps: 'm/s', wpm2: 'W/m²', umolpm2ps: 'µmol/m²/s', BeatsPerMin: 'bpm', mgpL: 'mg/L', Unitless: '', degps: '°/s', deg: '°',
+  dBA: 'dB', dBC: 'dB', Lps: 'L/s', drops: '방울',
+};
+const PSI_TO_KPA = 6.894757;
+
+// 데이터시트의 식(예: "(([8]/65536)*165)-40", "table([0],7122,45,…)")에 쓰는 함수
+const PASCO_FN = {
+  sqrt: Math.sqrt, atan2: Math.atan2, log: Math.log10, max: Math.max,
+  limit: (v, lo, hi) => Math.min(Math.max(v, lo), hi),
+  usound: (us, c) => (us / 1e6) * c / 2,
+  dewpoint: (t, rh) => { const e = rh * 6.11 * Math.pow(10, 7.5 * t / (237.7 + t)) / 100; return (-443.22 + 237.7 * Math.log(e)) / (-Math.log(e) + 19.08); },
+  heatindex: (t, rh) => t + 0.55555 * (rh * 6.11 * Math.pow(10, 7.5 * t / (237.7 + t)) / 100 - 10),
+  windchill: (t, w) => {
+    const f = 9 * t / 5 + 32, mph = w * 2.237;
+    const c = mph < 3 || f > 50 ? f : 35.74 + 0.6215 * f - 35.75 * Math.pow(mph, 0.16) + 0.4275 * f * Math.pow(mph, 0.16);
+    return 5 * (c - 32) / 9;
+  },
+  table: (x, ...pts) => {
+    const p = []; for (let i = 0; i + 1 < pts.length; i += 2) p.push([pts[i], pts[i + 1]]);
+    let i = 0; while (i < p.length - 2 && x > p[i + 1][0]) i++;
+    const [x0, y0] = p[i], [x1, y1] = p[i + 1];
+    return (y1 - y0) / (x1 - x0) * (x - x0) + y0;
+  },
+};
+const PASCO_FN_NAMES = Object.keys(PASCO_FN);
+const pascoEqCache = {};
+function pascoEval(eq, get) {
+  let fail = false;
+  const expr = eq.replace(/\[(\d+)\]/g, (_, id) => {
+    const v = get(Number(id));
+    if (v === null || v === undefined || !isFinite(v)) fail = true;
+    return `(${v})`;
+  }).replace(/\^/g, '**');
+  if (fail) return null;
+  // 데이터시트에 있는 숫자·연산자·허용 함수만 계산 (그 밖의 식은 지원하지 않음)
+  const words = expr.match(/[a-zA-Z_]\w*/g) || [];
+  if (words.some(w => !PASCO_FN_NAMES.includes(w) && !/^e\d*$/i.test(w))) return null;
+  if (/[^\w\s.+\-*/(),]/.test(expr)) return null;
+  try {
+    const fn = pascoEqCache[expr] || (pascoEqCache[expr] = new Function(...PASCO_FN_NAMES, `return (${expr});`));
+    const v = fn(...PASCO_FN_NAMES.map(k => PASCO_FN[k]));
+    return typeof v === 'number' && isFinite(v) ? v : null;
+  } catch (e) { return null; }
+}
+
+// 센서 하나의 응답 바이트 → {측정ID: 값}
+function pascoDecode(sensor, bytes) {
+  const vals = {};
+  let pos = 0;
+  for (const m of sensor.m) {
+    if (m.t !== 'RawDigital' && m.t !== 'Direct') continue;
+    const sz = m.sz || 0;
+    if (pos + sz > bytes.length) { vals[m.id] = null; pos += sz; continue; }
+    let v = 0;
+    for (let d = 0; d < sz; d++) v += bytes[pos + d] * Math.pow(2, 8 * d);
+    pos += sz;
+    if (sz === 4 || m.tc === 1) { if (v >= Math.pow(2, 8 * sz - 1)) v -= Math.pow(2, 8 * sz); }
+    if (m.t === 'Direct' && sz === 4) v = v / 65536;
+    vals[m.id] = v;
+  }
+  const byId = {};
+  sensor.m.forEach(m => { byId[m.id] = m; });
+  const busy = new Set();
+  const get = id => {
+    if (id in vals) return vals[id];
+    const m = byId[id];
+    if (!m || busy.has(id)) return null;
+    busy.add(id);
+    let r = null;
+    const p = (m.p || '').split(',').map(Number);
+    const ins = String(m.in ?? '').split(',').filter(s => s !== '').map(Number);
+    if (m.t === 'Constant') r = Number(m.val);
+    else if (m.eq) r = pascoEval(m.eq, get);
+    else if (ins.length) {
+      const x = get(ins[0]);
+      if (x !== null && x !== undefined) {
+        if (m.t === 'FactoryCal' || m.t === 'UserCal') {
+          const [x1, y1, x2, y2] = p;
+          const b = (x1 * y2 - x2 * y1) / (x1 - x2);
+          const k = x2 !== 0 ? (y2 - b) / x2 : (y1 - b) / x1;
+          r = k * x + b;
+        } else if (m.t === 'LinearConv') r = p[0] * x + p[1];
+        else if (m.t === 'Select') r = x;
+        else if (m.t === 'ThreeInputVector') {
+          const ys = ins.map(get);
+          r = ys.every(y => y !== null) ? Math.hypot(...ys) : null;
+        }
+      }
+    }
+    if (r !== null && m.lim) { const [lo, hi] = m.lim.split(',').map(Number); r = Math.min(Math.max(r, lo), hi); }
+    busy.delete(id);
+    vals[id] = r;
+    return r;
+  };
+  sensor.m.forEach(m => get(m.id));
+  return vals;
+}
+
+function pascoDecode64(ch) {
+  if (ch >= '0' && ch <= '9') return ch.charCodeAt(0) - 48;
+  if (ch >= 'K' && ch <= 'Z') return ch.charCodeAt(0) - 65;
+  if (ch >= 'A' && ch <= 'J') return ch.charCodeAt(0) - 65 + 26;
+  if (ch >= 'a' && ch <= 'z') return ch.charCodeAt(0) - 97 + 36;
+  if (ch === '*') return 62;
+  if (ch === '#') return 63;
+  return -1;
+}
+
+class PascoDriver extends GenericBleDriver {
+  constructor(config) {
+    super('pasco', config);
+    this.sheet = null;   // 기종을 알아내면 데이터시트 사용, 모르면 범용 방식(데이터 해석 설정)으로 동작
+    this.waiters = {};
+  }
+
+  // "Pressure 788-004>38" → 인터페이스 1027 (WirelessPressure)
+  static interfaceOf(name) {
+    const m = /(\d{3}-\d{3})>(.)/.exec(name || '');
+    if (!m || typeof PASCO_SHEETS === 'undefined') return null;
+    const id = pascoDecode64(m[2]) + 1024;
+    return PASCO_SHEETS.ifaces[id] ? { id, serial: m[1], ...PASCO_SHEETS.ifaces[id] } : null;
+  }
+
+  async connect() {
+    await super.connect();
+    const iface = PascoDriver.interfaceOf(this.deviceName);
+    if (!iface) {
+      this.emit('status', `${this.deviceName} 연결됨 (기종을 알 수 없어 범용 방식 사용)`);
+      return;
+    }
+    this.deviceName = `${iface.name} ${iface.serial}`;
+    this.sheet = iface;
+    this.sensors = iface.ch.map(([ch, sid]) => {
+      const s = PASCO_SHEETS.sensors[sid];
+      return { ch, sid, s, size: s.m.reduce((a, m) => a + ((m.t === 'RawDigital' || m.t === 'Direct') ? (m.sz || 0) : 0), 0), fails: 0 };
+    }).filter(x => x.s && x.size > 0);
+    // 화면에 보이는 측정 항목만 채널로 만들고, 기본 측정 항목만 처음에 켜 둠
+    this.channels = [];
+    this.sensors.forEach(x => {
+      const vis = x.s.m.filter(m => m.v === 1 && m.int !== 1);
+      const def = vis.find(m => m.def === 1) || vis[0];
+      vis.forEach(m => {
+        const psi = m.u === 'psi';
+        this.channels.push({
+          id: this.channels.length, name: PASCO_KO[m.n] || m.n, unit: PASCO_UNITS[m.u] ?? (m.u || ''),
+          enabled: m === def && x === this.sensors[0],
+          ch: x.ch, mid: m.id, factor: psi ? PSI_TO_KPA : 1, pr: psi ? 1 : (m.pr ?? 3),
+        });
+      });
+    });
+    if (!this.channels.some(c => c.enabled) && this.channels[0]) this.channels[0].enabled = true;
+    this.emit('channels', this.channels);
+    this.emit('status', `${this.deviceName} 연결됨`);
+    this._loop(); // 연결되면 바로 실시간 값을 보여 줌
+  }
+
+  applyDecoder(decoder) {
+    if (this.sheet) { this.config.decoder = decoder; this.emit('channels', this.channels); return; }
+    super.applyDecoder(decoder);
+  }
+
+  _onNotify(uuid, dv) {
+    if (!this.sheet) return super._onNotify(uuid, dv);
+    const bytes = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength).slice();
+    this.emit('raw', { uuid, bytes });
+    // 응답: [C0, 결과(00=정상), 05(1회 측정), 원시값…]
+    const svc = parseInt(uuid.charAt(7), 16);
+    const w = this.waiters[svc - 1];
+    if (!w || bytes[0] !== 0xc0 || bytes[2] !== 0x05) return;
+    delete this.waiters[svc - 1];
+    clearTimeout(w.timer);
+    if (bytes[1] === 0x00) w.resolve(bytes.slice(3)); else w.reject(new Error('센서가 측정 요청을 거절했습니다'));
+  }
+
+  _request(x) {
+    return new Promise(async (resolve, reject) => {
+      const timer = setTimeout(() => { delete this.waiters[x.ch]; reject(new Error('응답 없음')); }, 1500);
+      this.waiters[x.ch] = { resolve, reject, timer };
+      try {
+        const c = this._findChar(pascoUuid(x.ch + 1, 2));
+        if (!c) throw new Error('측정 요청 특성을 찾지 못했습니다');
+        const cmd = new Uint8Array([0x05, x.size]);
+        if (c.ch.properties.writeWithoutResponse && !c.ch.properties.write) await c.ch.writeValueWithoutResponse(cmd);
+        else await c.ch.writeValue(cmd);
+      } catch (e) { clearTimeout(timer); delete this.waiters[x.ch]; reject(e); }
+    });
+  }
+
+  async _readAll() {
+    const values = {};
+    const need = new Set(this.channels.filter(c => c.enabled).map(c => c.ch));
+    for (const x of this.sensors) {
+      if (!need.has(x.ch) || !this.connected) continue;
+      try {
+        const vals = pascoDecode(x.s, await this._request(x));
+        x.fails = 0;
+        this.channels.filter(c => c.ch === x.ch).forEach(c => {
+          const v = vals[c.mid];
+          if (v !== null && v !== undefined && isFinite(v)) {
+            const p = Math.pow(10, Math.min(6, Math.max(0, c.pr + 1)));
+            values[c.id] = Math.round(v * c.factor * p) / p;
+          }
+        });
+      } catch (e) {
+        if (++x.fails === 3) this.emit('status', `${this.deviceName}: ${e.message} — 센서 전원과 거리를 확인하세요`);
+      }
+    }
+    return values;
+  }
+
+  // 측정 중에는 측정 간격마다, 아니면 0.5초마다 값을 읽음
+  async _loop() {
+    if (this.looping) return;
+    this.looping = true;
+    while (this.connected && this.sheet) {
+      const began = performance.now();
+      const meas = this.measuring;
+      const t = meas ? (began - this.t0) / 1000 : 0;
+      const values = await this._readAll();
+      if (Object.keys(values).length) {
+        if (meas && this.measuring) this.emit('sample', { t: Math.round(t * 1000) / 1000, values });
+        else if (!this.measuring) this.emit('preview', values);
+      }
+      const wait = (this.measuring ? this.intervalMs : 500) - (performance.now() - began);
+      await new Promise(r => { this._wake = r; setTimeout(r, Math.max(20, wait)); });
+    }
+    this.looping = false;
+  }
+
+  async start(intervalMs) {
+    if (!this.sheet) return super.start(intervalMs);
+    // 블루투스 1회 측정 방식이라 너무 짧은 간격은 0.1초로 맞춤
+    this.intervalMs = Math.max(100, intervalMs);
+    this.t0 = performance.now();
+    this.measuring = true;
+    if (this._wake) this._wake(); // 미리보기 대기 중이면 바로 측정 시작
+    this._loop();
+    return this.intervalMs;
+  }
+
+  async stop() {
+    if (!this.sheet) return super.stop();
+    this.measuring = false;
   }
 }
 
