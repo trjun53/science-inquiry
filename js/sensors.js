@@ -635,10 +635,14 @@ class PascoDriver extends GenericBleDriver {
     const bytes = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength).slice();
     this.emit('raw', { uuid, bytes });
     // 응답: [C0, 결과(00=정상), 05(1회 측정), 원시값…]
+    // 응답은 센서 채널의 서비스(n+1)로 오기도 하고 기기 서비스(0)로 오기도 함.
+    // 요청을 한 번에 하나씩 보내므로, 해당 채널이 없으면 기다리는 요청에 응답을 넘김
+    if (bytes[0] !== 0xc0 || bytes[2] !== 0x05) return;
     const svc = parseInt(uuid.charAt(7), 16);
-    const w = this.waiters[svc - 1];
-    if (!w || bytes[0] !== 0xc0 || bytes[2] !== 0x05) return;
-    delete this.waiters[svc - 1];
+    const key = (svc - 1) in this.waiters ? svc - 1 : Object.keys(this.waiters)[0];
+    const w = key !== undefined ? this.waiters[key] : null;
+    if (!w) return;
+    delete this.waiters[key];
     clearTimeout(w.timer);
     if (bytes[1] === 0x00) w.resolve(bytes.slice(3)); else w.reject(new Error('센서가 측정 요청을 거절했습니다'));
   }
