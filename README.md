@@ -89,9 +89,9 @@ Web Bluetooth는 보안 때문에 **`https://` 주소나 `localhost`에서만** 
 
 | 제조사 | 연결 방식 | 상태 |
 |---|---|---|
-| **Vernier Go Direct** | 공개 프로토콜(godirect-js)을 구현했습니다. 센서 채널 이름과 단위를 자동으로 인식합니다. | 바로 사용 가능 |
+| **Vernier Go Direct** | Vernier 공식 라이브러리 godirect-js(@vernier/godirect 1.8.3, BSD-3, `js/vendor/godirect.min.js`)로 연결합니다. 센서 채널 이름과 단위를 자동으로 인식하고, 연결하면 실시간 값이 바로 보입니다. | 가상 기기로 프로토콜 시험 완료, 실기기 확인 필요 |
 | **PASCO 무선 센서** | PASCO 공식 Python 라이브러리(`pasco`)의 통신 방식을 따릅니다. 기기 이름에서 센서 종류를 알아내고, 1회 측정 요청(`05 데이터크기`)의 응답을 기종별 보정식(`js/pasco-sheets.js`)으로 계산합니다. | 압력 센서 연결 확인. 압력은 kPa로 표시 |
-| **사이언스큐브** | 범용 BLE: 서비스를 탐색하고 알림 데이터를 해석합니다. | 공개된 통신 규격이 없어 **기기 확인이 필요**합니다 |
+| **사이언스큐브** | 제조사 공식 웹 앱(Science#, on.sciencecube.com)과 같은 방식입니다. 이름이 `SC:`로 시작하는 무선 센서에 연결해 센서 ID(예: WL100T)로 종류를 알아내고, 46종의 데이터 형식으로 값을 계산합니다. 센서는 **모바일 모드**로 켜야 합니다. | 가상 기기로 시험 완료, 실기기 확인 필요 |
 | **이지메이커** | 범용 BLE: Nordic UART, HM-10(FFE0), ESP32 예제 UUID를 자동으로 찾습니다. | 보드가 숫자 텍스트(`23.5` 또는 `23.5,45.1`)를 보내면 바로 측정됩니다 |
 
 ### 범용 BLE 센서 설정하기 (교사용)
@@ -113,8 +113,9 @@ css/style.css       디자인 (인쇄용 스타일 포함)
 js/curriculum.js    학교급·학년·학기별 단원, 센서 추천 규칙, 예시 질문
 js/standards.js     2022 개정 초등 과학 성취기준 102개 (source/curriculum-standards.json에서 생성)
 js/textbooks.js     초등 과학 교과서별 단원·차시 192개 단원 (source/단원별 핵심 내용 추출 xlsx에서 생성)
-js/sensors.js       블루투스 드라이버 (Vernier, 범용 BLE, 가상 센서)
+js/sensors.js       블루투스 드라이버 (Vernier, PASCO, 사이언스큐브, 범용 BLE, 가상 센서)
 js/pasco-sheets.js  PASCO 무선 센서 데이터시트 요약 (PASCO scientific, 비상업·교육용 조건과 고지 포함)
+js/vendor/          Vernier 공식 라이브러리 godirect-js와 라이선스(BSD-3)
 js/experiments.js   초등 디지털 센서 실험 템플릿 41개 (예상 질문, 변인, 준비물, 과정, 안전 수칙)
 js/plot.js          그래프, 통계
 js/ai.js            AI 피드백 평가 (Claude API, 공식 JS SDK)

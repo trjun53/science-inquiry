@@ -1,6 +1,8 @@
 // 디지털 탐구 센서 블루투스(Web Bluetooth) 드라이버
-// - Vernier Go Direct : 공개 프로토콜(godirect-js)을 구현 → 채널 정보 자동 인식
-// - PASCO / 사이언스큐브 / 이지메이커 : 범용 BLE 드라이버 + 브랜드별 기본값
+// - Vernier Go Direct : 공식 라이브러리 godirect-js 사용 → 채널 정보 자동 인식
+// - PASCO : 공식 Python 라이브러리(pasco)의 통신 방식·데이터시트를 옮겨 구현
+// - 사이언스큐브 : 제조사 웹 앱(Science#)과 같은 통신 방식(SC: 이름, Transparent UART, Base64 프레임)
+// - 이지메이커 : 범용 BLE 드라이버 + 기본값
 //   (서비스 탐색 → 알림(notify) 구독 → 설정한 형식으로 데이터 해석)
 // - 시뮬레이션 : 센서 없이 수업 흐름을 연습할 수 있는 가상 센서
 
@@ -43,184 +45,111 @@ class BaseDriver {
   }
 }
 
-/* ───────────────────────── Vernier Go Direct ───────────────────────── */
-const GDX = {
-  service: 'd91714ef-28b9-4f91-ba16-f0d9a604f112',
-  command: 'f4bf14a6-c7d5-4b6d-8aa8-df1a7c83adcb',
-  response: 'b41e6675-a329-40e0-aa01-44d2f444babe',
-  INIT: [0x1a, 0xa5, 0x4a, 0x06, 0x49, 0x07, 0x48, 0x08, 0x47, 0x09, 0x46, 0x0a, 0x45, 0x0b, 0x44, 0x0c, 0x43, 0x0d, 0x42, 0x0e, 0x41],
-  GET_STATUS: [0x10],
-  GET_SENSOR_IDS: [0x51],
-  GET_DEFAULT_MASK: [0x56],
-  STOP: [0x19, 0xff, 0x00, 0xff, 0xff, 0xff, 0xff],
-  DISCONNECT: [0x54],
-  MEAS: 0x20,
+/* ───────────────────────── Vernier Go Direct ─────────────────────────
+   Vernier 공식 라이브러리 godirect-js(@vernier/godirect 1.8.3, BSD-3, js/vendor/godirect.min.js)로
+   연결·센서 정보·측정을 처리하고, 이 앱의 드라이버 형식(channels / preview / sample)으로 바꿔 줌 */
+const GDX_SERVICE = 'd91714ef-28b9-4f91-ba16-f0d9a604f112';
+const VERNIER_KO = {
+  Temperature: '온도', Pressure: '압력', Force: '힘', Voltage: '전압', Current: '전류', pH: 'pH',
+  'CO2 Gas': '이산화 탄소 농도', CO2: '이산화 탄소 농도', 'O2 Gas': '산소 농도', O2: '산소 농도',
+  Illumination: '조도', Light: '빛의 세기', 'Magnetic Field': '자기장', 'Sound Level': '소리 크기',
+  'Heart Rate': '심박수', 'Relative Humidity': '상대 습도', Humidity: '습도', Conductivity: '전기 전도도',
+  Position: '거리', Distance: '거리', Velocity: '속도', Acceleration: '가속도', 'Wind Speed': '풍속',
+  'Barometric Pressure': '기압', 'Dissolved Oxygen': '용존 산소', 'Surface Temperature': '표면 온도',
 };
 
 class VernierDriver extends BaseDriver {
   constructor() {
     super();
     this.brand = 'vernier';
-    this.counter = 0xff;
-    this.pending = new Map();
-    this.rx = null;
-    this.writeChain = Promise.resolve();
-    this.periodUs = 100000;
+    this.latest = {};
+    this.periodMs = 500;
   }
 
   async connect() {
-    this.device = await navigator.bluetooth.requestDevice({
-      filters: [{ namePrefix: 'GDX' }],
-      optionalServices: [GDX.service],
-    });
+    if (typeof godirect === 'undefined') throw new Error('Vernier 연결 라이브러리를 불러오지 못했습니다. 페이지를 새로고침하세요.');
+    this.device = await navigator.bluetooth.requestDevice({ filters: [{ namePrefix: 'GDX' }], optionalServices: [GDX_SERVICE] });
     this.deviceName = this.device.name || 'Go Direct';
     this.device.addEventListener('gattserverdisconnected', () => this._onDisconnected());
     this.emit('status', `${this.deviceName} 연결 중…`);
-    const server = await this.device.gatt.connect();
-    const svc = await server.getPrimaryService(GDX.service);
-    this.cmdChar = await svc.getCharacteristic(GDX.command);
-    this.respChar = await svc.getCharacteristic(GDX.response);
-    this.respChar.addEventListener('characteristicvaluechanged', e => this._onNotify(e.target.value));
-    await this.respChar.startNotifications();
+    this.gdx = await godirect.createDevice(this.device, { open: true, startMeasurements: false });
+    this.gdx.keepValues = false; // 값은 이 앱이 따로 저장함
+    this.gdx.on('device-closed', () => this._onDisconnected());
     this.connected = true;
 
-    this.emit('status', '센서 초기화 중…');
-    await this._cmd(GDX.INIT);
-    await this._cmd(GDX.GET_STATUS);
-    const def = await this._cmd(GDX.GET_DEFAULT_MASK);
-    const defaultMask = def.view.byteLength >= 4 ? def.view.getUint32(0, true) : 1;
-    const ids = await this._cmd(GDX.GET_SENSOR_IDS);
-    const available = ids.view.getUint32(0, true);
-
-    this.channels = [];
-    for (let i = 0; i < 31; i++) {
-      if (!(available & (1 << i))) continue;
-      const info = await this._cmd([0x50, i]);
-      const ch = this._parseSensorInfo(info, i);
-      if (ch) {
-        ch.enabled = !!(defaultMask & (1 << i));
-        this.channels.push(ch);
-      }
-    }
+    const def = this.gdx.defaultSensorsMask || 0;
+    this.channels = this.gdx.sensors.map(s => ({
+      id: s.number, name: VERNIER_KO[s.name] || s.name, unit: s.unit || '', enabled: !!(def & (1 << s.number)), sensor: s,
+    }));
     if (this.channels.length && !this.channels.some(c => c.enabled)) this.channels[0].enabled = true;
+    this.gdx.sensors.forEach(s => s.on('value-changed', x => this._onValue(x)));
     this.emit('channels', this.channels);
     this.emit('status', `${this.deviceName} 연결됨`);
+    await this._run(500).catch(e => console.warn(e)); // 연결되면 바로 실시간 값을 보여 줌
   }
 
-  _parseSensorInfo({ view, frame }, number) {
-    if (view.byteLength < 8) return null;
-    const id = view.getUint32(2, true);
-    if (id === 0) return null;
-    const str = (a, b) => new TextDecoder().decode(frame.slice(a, b).filter(x => x !== 0)).trim();
-    const name = str(14, 74) || `센서 ${number}`;
-    const unit = str(74, 106);
-    let minPeriodMs = 10;
-    if (view.byteLength >= 128) minPeriodMs = view.getUint32(124, true) / 1000;
-    return { id: number, name, unit, minPeriodMs, enabled: false };
+  // 측정을 멈추고, 켜진 채널과 간격을 맞춘 뒤 다시 시작
+  async _run(periodMs) {
+    const g = this.gdx;
+    if (g.collecting) await g._stopMeasurements().catch(() => {});
+    this.channels.forEach(c => c.sensor.setEnabled(!!c.enabled));
+    // 함께 쓸 수 없는 채널은 라이브러리가 끔 → 화면의 체크도 맞춤
+    let changed = false;
+    this.channels.forEach(c => { if (c.enabled !== c.sensor.enabled) { c.enabled = c.sensor.enabled; changed = true; } });
+    if (changed) this.emit('channels', this.channels);
+    const on = this.channels.filter(c => c.enabled);
+    if (!on.length) return;
+    const minMs = Math.max(10, ...on.map(c => (c.sensor.specs.measurementInfo || {}).minPeriod || 10));
+    this.periodMs = Math.max(periodMs, minMs);
+    g.measurementPeriod = this.periodMs;
+    this.latest = {};
+    this.row = 0;
+    await g._startMeasurements();
+    if (!g.collecting) throw new Error('측정 시작 실패 (동시에 사용할 수 없는 채널 조합일 수 있습니다)');
   }
 
-  // 프레임: [0x58, 길이, 롤링카운터, 체크섬, ...명령]
-  _cmd(sub, timeoutMs = 5000) {
-    const frame = new Uint8Array(sub.length + 4);
-    frame[0] = 0x58;
-    frame.set(sub, 4);
-    frame[1] = frame.length;
-    this.counter = (this.counter - 1) & 0xff;
-    frame[2] = this.counter;
-    let sum = 0;
-    for (let i = 0; i < frame.length; i++) if (i !== 3) sum = (sum + frame[i]) & 0xff;
-    frame[3] = sum;
-    const key = `${sub[0]}:${frame[2]}`;
-
-    const p = new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.pending.delete(key); reject(new Error('센서 응답 시간 초과')); }, timeoutMs);
-      this.pending.set(key, r => { clearTimeout(timer); resolve(r); });
-    });
-    this.writeChain = this.writeChain.then(async () => {
-      for (let i = 0; i < frame.length; i += 20) {
-        await this.cmdChar.writeValue(frame.slice(i, i + 20));
-      }
-    }).catch(e => console.error(e));
-    return p;
+  // 한 번의 측정(행)마다 켜진 센서 값이 차례로 들어옴 → 같은 센서가 다시 오면 다음 행
+  _onValue(s) {
+    if (!this.connected || s.value === null || s.value === undefined) return;
+    if (s.number in this.latest) this._flush();
+    this.latest[s.number] = Math.round(s.value * 10000) / 10000; // float32 자투리 자릿수 정리
+    const on = this.channels.filter(c => c.enabled);
+    if (on.every(c => c.id in this.latest)) this._flush();
   }
 
-  _onNotify(dv) {
-    const chunk = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
-    if (this.rx && this.rx.length < this.rx[1]) {
-      const merged = new Uint8Array(this.rx.length + chunk.length);
-      merged.set(this.rx); merged.set(chunk, this.rx.length);
-      this.rx = merged;
-    } else {
-      this.rx = new Uint8Array(chunk);
-    }
-    if (this.rx.length < 2 || this.rx.length < this.rx[1]) return; // 패킷 이어 받기
-    const frame = this.rx.slice(0, this.rx[1] || this.rx.length);
-    this.rx = null;
-
-    if (frame[0] === GDX.MEAS) { this._onMeasurement(frame); return; }
-    const key = `${frame[4]}:${frame[5]}`;
-    const resolve = this.pending.get(key);
-    if (resolve) {
-      this.pending.delete(key);
-      resolve({ frame, view: new DataView(frame.buffer, 6) });
-    }
+  _flush() {
+    const values = this.latest;
+    this.latest = {};
+    if (!Object.keys(values).length) return;
+    if (!this.measuring) { this.emit('preview', values); return; }
+    const t = Math.round(this.row * this.periodMs) / 1000; // 센서 내부 시계 간격으로 시간 계산
+    this.row++;
+    this.emit('sample', { t, values });
   }
 
-  _onMeasurement(frame) {
-    const v = new DataView(frame.buffer);
-    const type = frame[4];
-    const sensorsIn = mask => this.channels.filter(c => mask & (1 << c.id)).map(c => c.id);
-    const periodS = this.periodUs / 1e6;
-    const emitRows = (ids, count, offset, reader) => {
-      for (let k = 0; k < count; k++) {
-        const values = {};
-        for (const id of ids) {
-          if (offset + 4 > frame.length) return;
-          values[id] = reader(offset); offset += 4;
-        }
-        const t = (this.sampleIndex[ids.join(',')] = (this.sampleIndex[ids.join(',')] || 0) + 1) - 1;
-        this.emit('sample', { t: t * periodS, values });
-      }
-    };
-    const f32 = o => v.getFloat32(o, true);
-    const i32 = o => v.getInt32(o, true);
-    switch (type) {
-      case 0x06: emitRows(sensorsIn(v.getUint16(5, true)), frame[7], 9, f32); break;   // NORMAL_REAL32
-      case 0x07: emitRows(sensorsIn(v.getUint32(5, true)), frame[9], 11, f32); break;  // WIDE_REAL32
-      case 0x08: case 0x0a: emitRows([frame[6]], frame[7], 8, f32); break;             // SINGLE/APERIODIC REAL32
-      case 0x09: case 0x0b: emitRows([frame[6]], frame[7], 8, i32); break;             // SINGLE/APERIODIC INT32
-      default: break; // START_TIME, DROPPED, PERIOD 등은 무시
-    }
+  // 채널 체크를 바꾸면 실시간 값도 그 채널로 다시 받음
+  async refreshChannels() {
+    if (this.connected && !this.measuring) await this._run(500).catch(e => console.warn(e));
   }
 
   async start(intervalMs) {
-    const enabled = this.channels.filter(c => c.enabled);
-    if (!enabled.length) throw new Error('측정할 채널을 하나 이상 선택하세요.');
-    const minMs = Math.max(10, ...enabled.map(c => c.minPeriodMs || 10));
-    this.periodUs = Math.round(Math.max(intervalMs, minMs) * 1000);
-    const period = [0x1b, 0xff, 0x00, 0, 0, 0, 0, 0, 0, 0, 0];
-    for (let i = 0; i < 4; i++) period[3 + i] = (this.periodUs >>> (8 * i)) & 0xff;
-    await this._cmd(period);
-
-    let mask = 0;
-    enabled.forEach(c => { mask |= (1 << c.id); });
-    const start = [0x18, 0xff, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-    for (let i = 0; i < 4; i++) start[3 + i] = (mask >>> (8 * i)) & 0xff;
-    this.sampleIndex = {};
-    const r = await this._cmd(start);
-    if (r.view.byteLength && r.view.getUint8(0) !== 0) throw new Error('측정 시작 실패 (동시에 사용할 수 없는 채널 조합일 수 있습니다)');
+    if (!this.channels.some(c => c.enabled)) throw new Error('측정할 채널을 하나 이상 선택하세요.');
+    this.measuring = false;
+    await this._run(intervalMs);
+    this.row = 0;
     this.measuring = true;
-    return this.periodUs / 1000;
+    return this.periodMs;
   }
 
   async stop() {
     this.measuring = false;
-    if (this.connected) await this._cmd(GDX.STOP).catch(() => {});
+    if (this.connected) await this._run(500).catch(() => {}); // 측정이 끝나면 다시 실시간 값만 보여 줌
   }
 
   async disconnect() {
-    try { if (this.measuring) await this.stop(); } catch (e) { /* ignore */ }
-    try { if (this.connected) await this._cmd(GDX.DISCONNECT, 800); } catch (e) { /* ignore */ }
+    this.userClosed = true;
+    this.measuring = false;
+    try { if (this.gdx && this.gdx.opened) await this.gdx.close(); } catch (e) { /* ignore */ }
     await super.disconnect();
   }
 }
@@ -260,7 +189,7 @@ const BRAND_PRESETS = {
       fields: [{ name: '측정값', unit: '' }],
       startChar: '', startHex: '', stopChar: '', stopHex: '', pollChar: '', pollHex: '',
     },
-    note: '공개된 통신 규격이 없어 범용 방식으로 연결합니다. 센서가 숫자 텍스트(예: "23.5\\n")를 보내면 바로 측정됩니다. 바이너리 형식이면 [데이터 해석 설정]에서 형식을 지정하세요.',
+    note: '사이언스큐브 공식 웹 앱(Science#)과 같은 통신 방식으로 무선 센서 46종(온도, 전압, 전류, 압력, pH, 힘, 이산화 탄소, 산소, 빛, 습도, 소리, 심박 등)을 자동으로 알아봅니다. 압력은 kPa로 표시합니다. 아래 설정은 쓰이지 않으며, [원시 데이터]로 수신 상태만 확인할 수 있습니다.',
   },
   easymaker: {
     label: '이지메이커',
@@ -734,6 +663,223 @@ function readField(v, f) {
     case 'float32': return v.getFloat32(o, le);
     case 'fixed16_16': return v.getInt32(o, le) / 65536;
     default: return null;
+  }
+}
+
+/* ───────────────────────── 사이언스큐브 무선 센서 ─────────────────────────
+   제조사 공식 웹 앱(Science#, on.sciencecube.com)과 같은 통신 방식
+   - 기기 이름 "SC:TEMP", "SC:PRESS", "KDWEATHER", "SmartCart" … (센서를 '모바일 모드'로 켜야 보임)
+   - 서비스 49535343-fe7d-…(Transparent UART), 알림 49535343-1e4d-…, 쓰기 49535343-8841-…
+   - 프레임 20바이트: "{{" + Base64(본문 12바이트) + "}}", 본문 = [명령, 값 10바이트, 체크섬(앞 11바이트 합 % 256)]
+   - 'N'(78)→'n'(110): 센서 ID(예: WL100T), 'M'(77)+[간격ms 상위, 하위]→'m'(109): [번호, 측정값…], 간격 0이면 정지 */
+const SC_SERVICE = '49535343-fe7d-4ae5-8fa9-9fafd205e455';
+const SC_NOTIFY = '49535343-1e4d-4bd9-ba61-23c647249616';
+const SC_WRITE = '49535343-8841-43f4-a8d4-ecbe34729bb3';
+// 센서 ID 앞 6자리 → 데이터 형식(f)과 채널 [이름, 단위, 배율]
+const SC_SENSORS = {
+  WL100T: { f: 'float', ch: [["온도","°C"]] }, // Temperature (SC:TEMP)
+  WL101V: { f: 'float', ch: [["전압","V"]] }, // Voltage (SC:VOLT)
+  WL102C: { f: 'float', ch: [["전류","A"]] }, // Current (SC:CURR)
+  WL103P: { f: 'float', ch: [["압력","kPa",0.1]] }, // Pressure(A) (SC:PRESS)
+  WL104P: { f: 'float', ch: [["pH","pH"]] }, // pH Sensor (SC:PH)
+  WL105F: { f: 'shortdiv100', ch: [["힘","N"],["가속도 X축","m/s²"],["가속도 Y축","m/s²"],["가속도 Z축","m/s²"]] }, // Force (SC:FORC)
+  WL106M: { f: 'float', ch: [["거리","m"]] }, // Motion (SC:MOT)
+  WL107E: { f: 'float', ch: [["전기 전도도","mS/cm"]] }, // Conductivity (SC:EC-)
+  WL108M: { f: 'shortgtomtwl108m', ch: [["자기장 X축","mT"],["자기장 Y축","mT"],["자기장 Z축","mT"]] }, // 자기장2K (SC:MAG)
+  WL108F: { f: 'short', ch: [["자기장 X축","µT"],["자기장 Y축","µT"],["자기장 Z축","µT"]] }, // Magnetic Field (SC:MAG)
+  WL109G: { f: 'float', ch: [["전류","µA"]] }, // Galvanometer (SC:GALV)
+  WCT100: { f: 'shortforwct100', ch: [["거리","m"],["속력","m/s"],["힘","N"]] }, // SmartCart (SmartCart)
+  WL111C: { f: 'ushort', ch: [["이산화 탄소 농도","ppm"]] }, // CO₂ (SC:CO2)
+  WL112L: { f: 'float', ch: [["조도","lux"]] }, // Light (SC:LC-)
+  WL112C: { f: 'ushort', ch: [["빨강",""],["초록",""],["파랑",""]] }, // RGB Color (SC:RGB_C)
+  WL112U: { f: 'float', ch: [["자외선 지수",""]] }, // Ultraviolet (SC:RGB_U)
+  WL113O: { f: 'float', ch: [["산소 농도","%"]] }, // Oxygen (SC:O2-)
+  WL114E: { f: 'float', ch: [["전극 전압","mV"]] }, // Electrode Amplifier (SC:EA-)
+  WL115P: { f: 'short', ch: [["초미세먼지(PM2.5)","µg/m³"],["미세먼지(PM10)","µg/m³"]] }, // Fine Dust Sensor (SC:PM-)
+  WL116P: { f: 'float', ch: [["압력","kPa",0.1]] }, // Pressure(B) (SC:PRES)
+  WL117H: { f: 'shortdiv100', ch: [["습도","%"],["온도","°C"]] }, // Humidity (SC:HUM)
+  WL118D: { f: 'float', ch: [["용존 산소","mg/L"]] }, // Dissolved Oxygen (SC:DO-)
+  WL119S: { f: 'float', ch: [["염분","ppt"]] }, // Salinity (SC:SAL)
+  WL120P: { f: 'float', ch: [["시간","s"]] }, // Photogate (SC:PG-)
+  WL121E: { f: 'float', ch: [["심전도","mV"]] }, // EKG (SC:EKG)
+  WL122S: { f: 'float', ch: [["부피","L"],["유량","L/s"]] }, // Spirometer (SC:SPM)
+  WL123T: { f: 'float', ch: [["온도","°C"]] }, // Temperature (SC:TC-)
+  WL124S: { f: 'float', ch: [["소리 크기","dB"]] }, // Sound Level (SC:SOUND)
+  WL125W: { f: 'shortdiv10', ch: [["온도","°C"],["습도","%"],["압력","kPa",0.1]] }, // Weather (KDWEATHER)
+  WL125X: { f: 'shortdiv10', ch: [["풍향","°"],["풍속","m/s"]] }, // Wind (KDWXX)
+  WL125Y: { f: 'shortweaterwl125y', ch: [["조도","lux"],["자외선 지수",""]] }, // Light (KDWYY)
+  WL126R: { f: 'float', ch: [["방사선량","µSv/h"]] }, // Radiation (SC:RAD)
+  WL127Q: { f: 'float', ch: [["전하량","µC"]] }, // Electric Charge (SC:ELEC)
+  WL128A: { f: 'float', ch: [["빨강","AU"]] }, // Colorimeter (Red) (SC:CNT)
+  WL128B: { f: 'float', ch: [["초록","AU"]] }, // Colorimeter (Green) (SC:COLOR_B)
+  WL128C: { f: 'float', ch: [["파랑","AU"]] }, // Colorimeter (Blue) (SC:COLOR_C)
+  WL128D: { f: 'float', ch: [["노랑","AU"]] }, // Colorimeter (Yellow) (SC:COLOR_D)
+  WL128E: { f: 'float', ch: [["청록","AU"]] }, // Colorimeter (Cyan) (SC:COLOR_E)
+  WL128F: { f: 'float', ch: [["자홍","AU"]] }, // Colorimeter (Magenta) (SC:COLOR_F)
+  WL128T: { f: 'float', ch: [["탁도","NTU"]] }, // Turbidity (SC:TURB)
+  WL129H: { f: 'float', ch: [["심박수","bpm"]] }, // Heart Rate (SC:HRS-)
+  WL130D: { f: 'float', ch: [["물방울 수","방울"],["부피","mL"]] }, // Drop Counter (SC:DROP)
+  WL131J: { f: 'short', ch: [["전압","V"],["전류","A"],["전력","W"],["에너지","J"]] }, // Energy (SC:ENERGY)
+  WL132W: { f: 'shortdiv10', ch: [["온도 A","°C"],["온도 B","°C"],["온도 C","°C"],["온도 D","°C"]] }, // Vertical Temperature (SC:VTEMP)
+  WL133M: { f: 'shortdivmultico2wl133m', ch: [["온도","°C"],["습도","%"],["이산화 탄소 농도","ppm"]] }, // Multi-CO₂ (SC:MULTI)
+  WL134A: { f: 'shortforwl143a', ch: [["온도","°C"],["압력","kPa",0.1]] }, // Pressure & Temperature (SC:ATMT)
+};
+
+function scFrame(cmd, params = []) {
+  const body = new Uint8Array(12);
+  body[0] = cmd;
+  params.slice(0, 10).forEach((p, i) => { body[i + 1] = p & 0xff; });
+  let sum = 0; for (let i = 0; i < 11; i++) sum = (sum + body[i]) % 256;
+  body[11] = sum;
+  return new TextEncoder().encode('{{' + btoa(String.fromCharCode(...body)) + '}}');
+}
+
+// 측정 응답 값(params[1]부터) → 채널 값 배열
+function scDecode(p, f) {
+  const i16 = o => { const v = p[o] | (p[o + 1] << 8); return v > 32767 ? v - 65536 : v; };
+  const u16 = o => p[o] | (p[o + 1] << 8);
+  const s = n => Array.from({ length: n }, (_, k) => i16(1 + 2 * k));
+  switch (f) {
+    case 'float': return [new DataView(p.buffer, p.byteOffset + 1, 4).getFloat32(0, true)];
+    case 'short': return s(4);
+    case 'shortdiv10': return s(4).map(v => v / 10);
+    case 'shortdiv100': return s(4).map(v => v / 100);
+    case 'ushort': return Array.from({ length: 4 }, (_, k) => u16(1 + 2 * k));
+    case 'shortdivmultico2wl133m': { const v = s(3); return [v[0] / 10, v[1] / 10, v[2]]; }
+    case 'shortgtomtwl108m': return s(3).map(v => v * 0.1);
+    case 'shortforwct100': { const v = s(3); return [v[0] * 0.001, v[1] * 0.001, v[2] * 980665e-9]; }
+    case 'shortweaterwl125y': { const v = s(2); return [v[0], v[1] / 10]; }
+    case 'shortforwl143a': { const v = s(2); return [v[0] / 100, v[1] / 10]; }
+    default: return [];
+  }
+}
+
+class ScienceCubeDriver extends BaseDriver {
+  constructor() {
+    super();
+    this.brand = 'sciencecube';
+    this.rx = new Uint8Array(0);
+    this.periodMs = 500;
+  }
+
+  async connect() {
+    this.device = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: 'SC:' }, { namePrefix: 'Smart' }, { namePrefix: 'KD' }],
+      optionalServices: [SC_SERVICE],
+    });
+    this.deviceName = this.device.name || '사이언스큐브';
+    this.device.addEventListener('gattserverdisconnected', () => this._onDisconnected());
+    this.emit('status', `${this.deviceName} 연결 중…`);
+    let server = null;
+    for (let n = 0; n < 3 && !server; n++) { // 제조사 앱처럼 연결 실패 시 잠시 후 다시 시도
+      try { server = await this.device.gatt.connect(); } catch (e) {
+        if (/Authentication/i.test(e.message || '')) throw new Error('이 센서는 먼저 Windows 설정 > 블루투스에서 페어링해야 합니다.');
+        if (n === 2) throw e;
+        await sleep(300 * (n + 1));
+      }
+    }
+    const svc = await server.getPrimaryService(SC_SERVICE);
+    this.readChar = await svc.getCharacteristic(SC_NOTIFY);
+    this.writeChar = await svc.getCharacteristic(SC_WRITE);
+    this.readChar.addEventListener('characteristicvaluechanged', e => this._onNotify(e.target.value));
+    await this.readChar.startNotifications();
+    this.connected = true;
+
+    this.emit('status', '센서 종류 확인 중…');
+    let uid = null;
+    for (let n = 0; n < 3 && !uid; n++) uid = await this._askName();
+    this.uid = (uid || '').toUpperCase();
+    this.def = SC_SENSORS[this.uid.slice(0, 6)] || null;
+    const ch = this.def ? this.def.ch : [['측정값', '']];
+    this.channels = ch.map(([name, unit, k], i) => ({ id: i, name, unit, k: k || 1, enabled: i === 0 || ch.length <= 3 }));
+    if (this.uid) this.deviceName = `${this.deviceName} (${this.uid.slice(0, 6)})`;
+    this.emit('channels', this.channels);
+    this.emit('status', this.def ? `${this.deviceName} 연결됨` : `${this.deviceName} 연결됨 (센서 종류를 알 수 없음)`);
+    await this._measure(500); // 연결되면 바로 실시간 값을 보여 줌
+  }
+
+  _askName() {
+    return new Promise(resolve => {
+      this.nameWait = resolve;
+      this._send(78).catch(() => {});
+      setTimeout(() => { if (this.nameWait === resolve) { this.nameWait = null; resolve(null); } }, 1000);
+    });
+  }
+
+  async _send(cmd, params) {
+    if (!this.writeChar) return;
+    const data = scFrame(cmd, params);
+    // 제조사 앱처럼 쓰기 응답을 오래 기다리지 않음(0.3초)
+    await Promise.race([this.writeChar.writeValue(data), sleep(300)]);
+  }
+
+  _measure(ms) {
+    this.periodMs = ms;
+    this.row = 0;
+    return this._send(77, [(ms >> 8) & 0xff, ms & 0xff]);
+  }
+
+  _onNotify(dv) {
+    const chunk = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength).slice();
+    this.emit('raw', { uuid: SC_NOTIFY, bytes: chunk });
+    let b = new Uint8Array(this.rx.length + chunk.length);
+    b.set(this.rx); b.set(chunk, this.rx.length);
+    // "{{" 로 시작하고 "}}" 로 끝나는 20바이트 단위로 잘라 읽음
+    while (b.length >= 20) {
+      const st = b.findIndex((x, i) => x === 123 && b[i + 1] === 123);
+      if (st < 0) { b = b.slice(b.length - 1); break; }
+      if (st > 0) { b = b.slice(st); continue; }
+      if (b[18] !== 125 || b[19] !== 125) { b = b.slice(1); continue; }
+      try {
+        const body = Uint8Array.from(atob(String.fromCharCode(...b.slice(2, 18))), c => c.charCodeAt(0));
+        let sum = 0; for (let i = 0; i < 11; i++) sum = (sum + body[i]) % 256;
+        if (body.length === 12 && sum === body[11]) this._onMessage(body[0], body.slice(1, 11));
+      } catch (e) { /* 깨진 프레임은 건너뜀 */ }
+      b = b.slice(20);
+    }
+    this.rx = b.length > 400 ? new Uint8Array(0) : b;
+  }
+
+  _onMessage(cmd, p) {
+    if (cmd === 110) { // 이름(센서 ID)
+      const id = String.fromCharCode(...p.slice(1, 10)).replace(/\0/g, '').trim();
+      if (this.nameWait) { const w = this.nameWait; this.nameWait = null; w(id); }
+      return;
+    }
+    if (cmd !== 109) return; // 측정값만 사용
+    const raw = scDecode(p, this.def ? this.def.f : 'float');
+    const values = {};
+    this.channels.forEach((c, i) => {
+      const v = raw[i];
+      if (c.enabled && v !== undefined && isFinite(v)) values[c.id] = Math.round(v * c.k * 10000) / 10000;
+    });
+    if (!Object.keys(values).length) return;
+    if (!this.measuring) { this.emit('preview', values); return; }
+    const t = Math.round(this.row * this.periodMs) / 1000; // 센서가 정한 간격으로 시간 계산
+    this.row++;
+    this.emit('sample', { t, values });
+  }
+
+  async start(intervalMs) {
+    if (!this.channels.some(c => c.enabled)) throw new Error('측정할 채널을 하나 이상 선택하세요.');
+    const ms = Math.min(65535, Math.max(20, Math.round(intervalMs)));
+    this.measuring = false;
+    await this._send(77, [0, 0]);
+    await sleep(50);
+    this.measuring = true;
+    await this._measure(ms);
+    return ms;
+  }
+
+  async stop() {
+    this.measuring = false;
+    if (this.connected) await this._measure(500).catch(() => {}); // 다시 실시간 값만 보여 줌
+  }
+
+  async disconnect() {
+    this.measuring = false;
+    try { if (this.connected) await this._send(77, [0, 0]); } catch (e) { /* ignore */ }
+    await super.disconnect();
   }
 }
 
