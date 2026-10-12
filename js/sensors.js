@@ -770,19 +770,47 @@ class ScienceCubeDriver extends BaseDriver {
     this.deviceName = this.device.name || '사이언스큐브';
     this.device.addEventListener('gattserverdisconnected', () => this._onDisconnected());
     this.emit('status', `${this.deviceName} 연결 중…`);
-    let server = null;
-    for (let n = 0; n < 3 && !server; n++) { // 제조사 앱처럼 연결 실패 시 잠시 후 다시 시도
-      try { server = await this.device.gatt.connect(); } catch (e) {
-        if (/Authentication/i.test(e.message || '')) throw new Error('이 센서는 먼저 Windows 설정 > 블루투스에서 페어링해야 합니다.');
-        if (n === 2) throw e;
-        await sleep(300 * (n + 1));
+    // Windows에서는 첫 연결·알림 켜기가 가끔 실패함 → 단계별로 확인하며 전체를 몇 번 다시 시도
+    let lastErr = null, step = '';
+    for (let n = 0; n < 4; n++) {
+      try {
+        step = '블루투스 연결';
+        const server = await this.device.gatt.connect();
+        await sleep(200); // 연결 직후 바로 요청하면 실패하는 경우가 있어 잠시 기다림
+        step = '서비스 찾기';
+        const svc = await server.getPrimaryService(SC_SERVICE);
+        step = '통신 통로 찾기';
+        this.readChar = await svc.getCharacteristic(SC_NOTIFY);
+        this.writeChar = await svc.getCharacteristic(SC_WRITE);
+        step = '데이터 받기(알림) 켜기';
+        if (!this.listening) {
+          this.readChar.addEventListener('characteristicvaluechanged', e => this._onNotify(e.target.value));
+          this.listening = true;
+        }
+        await this.readChar.startNotifications();
+        lastErr = null;
+        break;
+      } catch (e) {
+        lastErr = e;
+        console.warn(`사이언스큐브 ${step} 실패 (${n + 1}회)`, e);
+        if (/Authentication|Insufficient/i.test(e.message || '')) break;
+        this.emit('status', `${step} 다시 시도 중… (${n + 2}/4)`);
+        try { if (this.device.gatt.connected) this.device.gatt.disconnect(); } catch (x) { /* ignore */ }
+        this.listening = false;
+        await sleep(500 * (n + 1));
       }
     }
-    const svc = await server.getPrimaryService(SC_SERVICE);
-    this.readChar = await svc.getCharacteristic(SC_NOTIFY);
-    this.writeChar = await svc.getCharacteristic(SC_WRITE);
-    this.readChar.addEventListener('characteristicvaluechanged', e => this._onNotify(e.target.value));
-    await this.readChar.startNotifications();
+    if (lastErr) {
+      try { if (this.device.gatt.connected) this.device.gatt.disconnect(); } catch (x) { /* ignore */ }
+      if (/Authentication|Insufficient/i.test(lastErr.message || '')) {
+        throw new Error('이 센서는 Windows에서 먼저 페어링해야 합니다. 설정 > 블루투스 및 장치 > 장치 추가 > 블루투스에서 '
+          + `${this.deviceName}을(를) 선택해 페어링한 뒤, 이 화면에서 다시 [블루투스로 연결]을 누르세요.`);
+      }
+      const pair = /GATT operation failed/i.test(lastErr.message || '');
+      throw new Error(`${step} 단계에서 실패했습니다 (${lastErr.message}). `
+        + (pair ? '센서를 껐다 켠 뒤 다시 연결해 보고, 계속 안 되면 Windows 설정 > 블루투스 및 장치 > 장치 추가에서 센서를 먼저 페어링한 뒤 연결하세요.'
+                : '센서를 껐다 켜고 PC 가까이에서 다시 연결하세요. 다른 앱·태블릿에 연결되어 있으면 먼저 끊으세요.'));
+    }
     this.connected = true;
 
     this.emit('status', '센서 종류 확인 중…');
@@ -806,11 +834,26 @@ class ScienceCubeDriver extends BaseDriver {
     });
   }
 
+  // 쓰기: 응답 있는 쓰기와 응답 없는 쓰기 중 되는 쪽을 기억해 사용. 실패해도 연결은 유지(제조사 앱과 같음)
   async _send(cmd, params) {
-    if (!this.writeChar) return;
+    if (!this.writeChar) return false;
     const data = scFrame(cmd, params);
-    // 제조사 앱처럼 쓰기 응답을 오래 기다리지 않음(0.3초)
-    await Promise.race([this.writeChar.writeValue(data), sleep(300)]);
+    const pr = this.writeChar.properties || {};
+    const modes = this.writeMode ? [this.writeMode] : [pr.write !== false ? 'with' : null, pr.writeWithoutResponse ? 'without' : null].filter(Boolean);
+    if (!modes.length) modes.push('with');
+    for (const m of modes) {
+      try {
+        const w = m === 'without' ? this.writeChar.writeValueWithoutResponse(data) : this.writeChar.writeValue(data);
+        // 응답을 오래 기다리지 않음(0.3초). 그 사이 오류가 나면 다른 방식으로 다시 씀
+        await Promise.race([w, sleep(300)]);
+        this.writeMode = m;
+        return true;
+      } catch (e) {
+        console.warn('사이언스큐브 쓰기 실패', m, e);
+        if (this.writeMode) { this.writeMode = null; return this._send(cmd, params); }
+      }
+    }
+    return false;
   }
 
   _measure(ms) {
