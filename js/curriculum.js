@@ -104,10 +104,58 @@ const STD_HINTS = [
   [/(소화|순환|호흡|배설) ?기관/, '6과04-02'],
   [/생태계|피해/, '6과14-04'],
   [/생성되는 물질|생기는 물질|연소 후|연소 전과 후/, '6과14-03'],
+  [/갯벌|밀물|썰물|^(?!.*지형).*바닷물의 높이/, '4과06-03'],
+  [/물 부족|물을 얻/, '4과10-03'],
+  [/진로|직업/, '6과16-02'],
+  [/불을 붙|발화/, '6과14-02'],
 ];
+// 1) 핵심어 → 2) 낱말 겹침(2개 이상) → 3) 연결된 센서 실험의 성취기준 → 4) 조사를 뗀 낱말로 다시 비교
 function matchStandard(std, title) {
   const hint = STD_HINTS.find(([re, code]) => re.test(title) && standardsFor(std).some(s => s.code === code));
   if (hint) return hint[1];
+  const byWords = matchStandardByWords(std, title);
+  if (byWords) return byWords;
+  const exp = typeof experimentsForLesson === 'function' ? experimentsForLesson(std, title)[0] : null;
+  const byExp = exp ? experimentStandard(exp) : '';
+  if (byExp) return byExp;
+  return matchStandardByStems(std, title) || fallbackStandard(std, title);
+}
+
+// 위 방법으로 찾지 못한 차시만: 단원별 주제어로 성취기준을 정함 (이미 연결된 차시에는 쓰지 않음)
+const STD_FALLBACK = [
+  [/움직여|밀거나|당기/, '4과01-01'], [/무게|무거운|오르락/, '4과01-02'],
+  [/주변.*동물|동물.*찾/, '4과02-01'], [/(사막|극지방|높은 산|물에|땅에|하늘|강|바다).*(동물|사는)/, '4과02-02'],
+  [/주변.*식물/, '4과03-01'], [/(사막|높은 산|들이나|강이나|연못|물에).*(식물|사는)|부레옥잠|선인장|식물원/, '4과03-02'],
+  [/배추흰나비|사육/, '4과04-01'], [/식물의 한살이|한해살이|여러해살이/, '4과04-03'],
+  [/물체|재료/, '4과05-01'],
+  [/공기/, '4과06-01'],
+  [/소리를 내/, '4과07-01'],
+  [/경험/, '4과08-01'], [/걸리는지|감염 과정/, '4과08-02'], [/마스크|예방/, '4과08-03'],
+  [/붙을까|붙는/, '4과09-01'], [/나침반|가리키는|자석과 자석|고리 자석/, '4과09-02'],
+  [/물 발자국|물이 부족|물의 중요성/, '4과10-03'], [/사라진 물|증발|물방울|차가운 물체/, '4과10-02'],
+  [/현무암|화강암/, '4과11-03'], [/화산/, '4과11-02'], [/흙 언덕|깎이|쌓이/, '4과11-01'],
+  [/버섯|곰팡이|해캄|짚신벌레|세균/, '4과12-01'],
+  [/별과 행성|별/, '4과13-03'],
+  [/생태계|양분을 얻/, '4과14-01'],
+  [/해수면|피해/, '4과16-02'], [/기온|기후/, '4과16-01'],
+  [/지층/, '6과01-01'],
+  [/빛이 없/, '6과02-01'],
+  [/노폐물|배설/, '6과04-02'],
+  [/물에 넣/, '6과03-01'],
+  [/소금과 모래|용해되는/, '6과05-02'], [/혼합물/, '6과05-01'],
+  [/바람/, '6과06-03'], [/날씨|기상/, '6과06-01'],
+  [/꽃|뿌리|줄기/, '6과11-02'],
+  [/해시계/, '6과13-01'],
+  [/섞/, '6과14-01'], [/온도가 연소/, '6과14-02'], [/이산화 탄소/, '6과14-04'],
+  [/전기가 잘 흐르/, '6과15-01'], [/전자석/, '6과15-03'],
+];
+function fallbackStandard(std, title) {
+  const codes = standardsFor(std).map(s => s.code);
+  const hit = STD_FALLBACK.find(([re, code]) => codes.includes(code) && re.test(title));
+  return hit ? hit[1] : '';
+}
+
+function matchStandardByWords(std, title) {
   const words = s => new Set((s.match(/[가-힣]{2,}/g) || []).map(w => w.slice(0, 2)));
   const t = words(title);
   let best = null, bestScore = 0;
@@ -118,6 +166,49 @@ function matchStandard(std, title) {
     if (score > bestScore) { bestScore = score; best = s.code; }
   }
   return bestScore >= 2 ? best : '';
+}
+
+// 센서 실험의 성취기준: 그 실험이 연결된 여러 교과서 차시들이 가장 많이 가리키는 성취기준
+const expStdCache = {};
+function experimentStandard(exp) {
+  if (exp.id in expStdCache) return expStdCache[exp.id];
+  const count = {};
+  if (typeof TEXTBOOK_UNITS !== 'undefined') {
+    TEXTBOOK_UNITS.filter(u => u[5] === exp.std).forEach(u => u[7].forEach(t => {
+      const e = experimentsForLesson(u[5], t)[0];
+      if (!e || e.id !== exp.id) return;
+      const hint = STD_HINTS.find(([re, code]) => re.test(t) && code.startsWith(exp.std));
+      const code = hint ? hint[1] : matchStandardByWords(u[5], t);
+      if (code) count[code] = (count[code] || 0) + 1;
+    }));
+  }
+  const best = Object.entries(count).sort((a, b) => b[1] - a[1])[0];
+  return (expStdCache[exp.id] = best ? best[0] : '');
+}
+
+// '빛은·빛을', '물에는' 같은 조사를 떼고, 어느 차시에나 나오는 낱말('알아보기', '설명하기' 등)은 빼고 비교
+const STD_PARTICLE = /(에서는|에서|에는|에게|으로|부터|까지|이나|이고|이며|처럼|보다|하고|은|는|이|가|을|를|의|에|과|와|도|로|만)$/;
+const STD_STOP = new Set(['알아', '보기', '설명', '하기', '알기', '우리', '여러', '가지', '어떻', '어떤', '무엇', '있음', '있다', '있는', '있어', '통해', '대해', '이야', '다른', '같은', '그리', '느끼']);
+function stdStems(s) {
+  const out = new Set();
+  (s.match(/[가-힣]+/g) || []).forEach(w => {
+    const tok = (w.length > 1 ? w.replace(STD_PARTICLE, '') : w).slice(0, 2);
+    if (tok && !STD_STOP.has(tok)) out.add(tok);
+  });
+  return out;
+}
+function matchStandardByStems(std, title) {
+  const t = stdStems(title);
+  const scored = standardsFor(std).map(s => {
+    const w = stdStems(s.text);
+    let n = 0;
+    t.forEach(x => { if (w.has(x)) n++; });
+    return { code: s.code, n };
+  });
+  const best = scored.reduce((a, b) => (b.n > a.n ? b : a), { code: '', n: 0 });
+  if (best.n >= 2) return best.code;
+  // 핵심어가 하나만 겹쳐도 그 성취기준 하나와만 겹치면 연결
+  return best.n === 1 && scored.filter(s => s.n === 1).length === 1 ? best.code : '';
 }
 
 // 성취기준 자료가 없는 단원(중·고, 직접 입력)에 쓰는 탐구 수업 기본 차시 구성
