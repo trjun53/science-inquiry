@@ -1090,18 +1090,21 @@ class SimulationDriver extends BaseDriver {
     this.setSensor(sensorKey);
   }
   setSensor(key) {
+    const same = !this.exp && this.sensorKey === key && this.channels.length === 1;
     this.exp = null;
     this.sensorKey = SENSOR_TYPES[key] ? key : 'temp';
     const s = SENSOR_TYPES[this.sensorKey];
-    this.channels = [{ id: 0, name: s.name, unit: s.unit, enabled: true }];
+    this.channels = [{ id: 0, name: s.name, unit: s.unit, enabled: same ? this.channels[0].enabled : true }];
     this.emit('channels', this.channels);
   }
   // 실험 템플릿에 맞춘 예시 데이터 사용 (ctxFn: 조건 번호 k, 수동 기록 값 x를 알려 주는 함수)
   useExperiment(exp, ctxFn) {
     if (!exp || typeof EXP_SIM === 'undefined' || !EXP_SIM[exp.id]) return false;
+    // 같은 실험을 다시 적용할 때(측정 시작 직전 등)는 [센서 연결]에서 고른 채널 선택을 그대로 유지
+    const prev = this.exp && this.exp.id === exp.id ? this.channels : null;
     this.exp = exp;
     this.ctxFn = ctxFn;
-    this.channels = simChannels(exp).map(([key, name], i) => ({ id: i, name, unit: SENSOR_TYPES[key].unit, enabled: true }));
+    this.channels = simChannels(exp).map(([key, name], i) => ({ id: i, name, unit: SENSOR_TYPES[key].unit, enabled: prev && prev[i] ? prev[i].enabled : true }));
     this.emit('channels', this.channels);
     return true;
   }
@@ -1142,6 +1145,7 @@ class SimulationDriver extends BaseDriver {
       const ys = model({ t, k, x: live.x !== undefined ? live.x : null });
       const values = {};
       ys.forEach((y, i) => {
+        if (this.channels[i] && !this.channels[i].enabled) return; // 고른 채널만 측정
         // 실제 센서처럼 아주 작은 흔들림을 더함
         const noise = (Math.random() - 0.5) * (Math.abs(y) * 0.003 + 0.002);
         values[i] = Math.round((y + noise) * 10000) / 10000;
