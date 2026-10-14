@@ -304,12 +304,27 @@ document.addEventListener('focusin', e => {
   const p = e.target && e.target.dataset && e.target.dataset.bind;
   if (inGroup() && group.ws && group.ws.readyState === 1) group.ws.send(JSON.stringify({ t: 'focus', p: p || '' }));
 });
+// 첫 화면에서 학교급~차시를 고를 때도 '입력 중'을 알림 (몇 초 동안 다시 고르지 않으면 사라짐)
+let groupPresenceTimer = null;
+function groupPresence(p) {
+  if (!inGroup() || !group.ws || group.ws.readyState !== 1) return;
+  group.ws.send(JSON.stringify({ t: 'focus', p }));
+  clearTimeout(groupPresenceTimer);
+  groupPresenceTimer = setTimeout(() => {
+    const a = document.activeElement;
+    if (group.ws && group.ws.readyState === 1) group.ws.send(JSON.stringify({ t: 'focus', p: (a && a.dataset && a.dataset.bind) || '' }));
+  }, 5000);
+}
 function groupShowEditors() {
   document.querySelectorAll('.editing-by').forEach(x => x.remove());
   if (!inGroup()) return;
   group.members.filter(mb => mb.cid !== groupCid() && mb.focus).forEach(mb => {
-    const el = document.querySelector(`[data-bind="${CSS.escape(mb.focus)}"]`);
-    const label = el && (el.closest('.field') || el.parentElement);
+    let label;
+    if (mb.focus.startsWith('setup:')) label = document.querySelector(`.sel-row[data-row="${CSS.escape(mb.focus.slice(6))}"] h3`);
+    else {
+      const el = document.querySelector(`[data-bind="${CSS.escape(mb.focus)}"]`);
+      label = el && (el.closest('.field') || el.parentElement);
+    }
     if (!label) return;
     const tag = document.createElement('span');
     tag.className = 'editing-by';
@@ -354,7 +369,7 @@ function groupBoxHtml() {
     <div class="group-box joined">
       <div class="g-big">${esc(g.code)}</div>
       <p>${g.role === 'leader' ? '친구들에게 이 <b>모둠 코드</b>를 알려 주세요. 친구들은 첫 화면의 [모둠 탐구]에서 코드를 넣으면 함께 쓸 수 있어요.' : '모둠에 참여했어요. 모둠원과 같은 보고서를 함께 쓰고 있어요.'}</p>
-      <p class="muted small">지금 접속한 모둠원: ${group.members.length ? `${group.members.length}명(나 포함)` : '연결 중…'} · 모둠 탐구 중에는 수업(단원·차시)을 바꿀 수 없어요.</p>
+      <p class="muted small">지금 접속한 모둠원: ${group.members.length ? `${group.members.length}명(나 포함)` : '연결 중…'} · 아래에서 수업(학교급~차시)을 고르면 모둠원 화면에도 똑같이 바뀌어요.</p>
       <button class="btn small ghost" data-action="groupLeave">모둠 나가기</button>
     </div>`;
   }
@@ -367,7 +382,7 @@ function groupBoxHtml() {
         <div><p class="muted small">친구가 알려 준 코드로 참여해요</p>
           <div class="join-row"><input id="groupCode" maxlength="6" placeholder="코드 6자리" autocomplete="off"><button class="btn" data-action="groupJoin">참여하기</button></div></div>
       </div>
-      ${!unitName() ? '<p class="muted small">새 모둠을 만드는 친구는 위에서 수업(단원·차시)을 먼저 골라 주세요. 참여하는 친구는 수업을 고르지 않아도 돼요.</p>' : ''}
+      <p class="muted small">모둠을 만든 뒤 아래에서 수업(학교급~차시)을 고르면 모둠원 화면에도 함께 바뀌어요. 참여하는 친구는 수업을 고르지 않아도 돼요.</p>
     </div>`;
 }
 function renderGroupBox() {

@@ -221,21 +221,21 @@ function viewSetup() {
   </section>
   <div class="setup-grid">
     <section class="card">
-      <div class="sel-row"><h3><b>1</b> 학교급</h3><div class="chips">${choice('setLevel', levels, m.level, 'lg')}</div></div>
-      <div class="sel-row ${m.level ? '' : 'disabled'}"><h3><b>2</b> 학년</h3><div class="chips">${m.level ? choice('setGrade', grades, m.grade) : '<span class="muted">학교급을 먼저 선택하세요</span>'}</div></div>
-      <div class="sel-row ${m.grade ? '' : 'disabled'}"><h3><b>3</b> 학기</h3><div class="chips">${m.grade ? choice('setSemester', sems, m.semester) : '<span class="muted">학년을 먼저 선택하세요</span>'}</div></div>
-      <div class="sel-row ${m.semester ? '' : 'disabled'}"><h3><b>4</b> 교과서</h3>${pubHtml}</div>
-      <div class="sel-row ${unitsReady ? '' : 'disabled'}"><h3><b>5</b> 단원</h3>
+      <div class="sel-row mode-row"><h3>탐구 방식</h3>
+        <div id="groupBox">${groupBoxHtml()}</div>
+      </div>
+      <div class="sel-row" data-row="level"><h3><b>1</b> 학교급</h3><div class="chips">${choice('setLevel', levels, m.level, 'lg')}</div></div>
+      <div class="sel-row ${m.level ? '' : 'disabled'}" data-row="grade"><h3><b>2</b> 학년</h3><div class="chips">${m.level ? choice('setGrade', grades, m.grade) : '<span class="muted">학교급을 먼저 선택하세요</span>'}</div></div>
+      <div class="sel-row ${m.grade ? '' : 'disabled'}" data-row="semester"><h3><b>3</b> 학기</h3><div class="chips">${m.grade ? choice('setSemester', sems, m.semester) : '<span class="muted">학년을 먼저 선택하세요</span>'}</div></div>
+      <div class="sel-row ${m.semester ? '' : 'disabled'}" data-row="publisher"><h3><b>4</b> 교과서</h3>${pubHtml}</div>
+      <div class="sel-row ${unitsReady ? '' : 'disabled'}" data-row="unit"><h3><b>5</b> 단원</h3>
         <div class="units">
           ${unitsHtml}
           ${unitsReady ? `<label class="field custom-unit"><span>목록에 없나요? 단원명 직접 입력</span><input data-bind="meta.customUnit" value="${esc(m.customUnit)}" placeholder="예: 2. 전기와 자기"></label>` : ''}
         </div>
       </div>
-      <div class="sel-row ${unitName() ? '' : 'disabled'}"><h3><b>6</b> 차시</h3>
+      <div class="sel-row ${unitName() ? '' : 'disabled'}" data-row="lesson"><h3><b>6</b> 차시</h3>
         <div id="lessonBox">${unitName() ? lessonPicker() : '<span class="muted">단원을 먼저 선택하세요</span>'}</div>
-      </div>
-      <div class="sel-row"><h3><b>7</b> 탐구 방식</h3>
-        <div id="groupBox">${groupBoxHtml()}</div>
       </div>
       <p class="note">${isElem()
         ? '※ 초등은 2022 개정 교육과정 성취기준과 교과서별 지도서 자료(source 폴더)를 바탕으로 합니다. 센서 표시와 탐구 예시는 해당 학년 교육과정 범위 안의 활동만 골랐어요.'
@@ -1047,7 +1047,7 @@ function hasInquiryContent() {
 function startNewInquiry() {
   if (!hasInquiryContent()) { clearInquiry(); return true; }
   const label = [unitName(), lessonLabel()].filter(Boolean).join(' · ') || '이전 탐구';
-  const ok = confirm(`다른 수업을 고르면 지금까지의 탐구 기록(${label})이 지워져요.\n탐구 질문, 예상, 점검 체크, 측정 데이터, 결론, 피드백이 모두 사라집니다.\n\n남겨 두려면 [취소]를 누르고 먼저 [파일 저장]을 하세요.\n새 수업으로 바꿀까요?`);
+  const ok = confirm(`다른 수업을 고르면 지금까지의 탐구 기록(${label})이 지워져요.${typeof inGroup === 'function' && inGroup() ? '\n모둠 탐구 중이라 모둠원 모두의 화면에서도 함께 지워져요.' : ''}\n탐구 질문, 예상, 점검 체크, 측정 데이터, 결론, 피드백이 모두 사라집니다.\n\n남겨 두려면 [취소]를 누르고 먼저 [파일 저장]을 하세요.\n새 수업으로 바꿀까요?`);
   if (ok) { clearInquiry(); toast('이전 탐구 기록을 지우고 새 수업을 시작해요.'); }
   return ok;
 }
@@ -1645,17 +1645,17 @@ const actions = {
     state.step = Math.min(STEPS.length - 1, state.step + 1); save(); render();
   },
   setLevel: el => {
-    if (groupLocked()) return;
+    groupPresence('setup:level');
     if (el.dataset.value === state.meta.level || !startNewInquiry()) return;
     Object.assign(state.meta, { level: el.dataset.value, grade: '', semester: '', unit: '', std: '', group: '', ...NO_LESSON }); save(); render();
   },
   setGrade: el => {
-    if (groupLocked()) return;
+    groupPresence('setup:grade');
     if (el.dataset.value === state.meta.grade || !startNewInquiry()) return;
     Object.assign(state.meta, { grade: el.dataset.value, semester: '', unit: '', std: '', group: '', ...NO_LESSON }); save(); render();
   },
   setSemester: el => {
-    if (groupLocked()) return;
+    groupPresence('setup:semester');
     const m = state.meta;
     if (el.dataset.value === m.semester || !startNewInquiry()) return;
     Object.assign(m, { semester: el.dataset.value, unit: '', std: '', group: '', ...NO_LESSON });
@@ -1663,7 +1663,7 @@ const actions = {
     save(); render();
   },
   setPublisher: el => {
-    if (groupLocked()) return;
+    groupPresence('setup:publisher');
     const m = state.meta;
     if (el.dataset.value === m.publisher || !startNewInquiry()) return;
     m.publisher = el.dataset.value;
@@ -1676,7 +1676,7 @@ const actions = {
     save(); render();
   },
   setUnit: el => {
-    if (groupLocked()) return;
+    groupPresence('setup:unit');
     const m = state.meta;
     const changed = (m.std || m.unit) !== (el.dataset.std || el.dataset.value) || m.customUnit.trim();
     if (!changed) return;
@@ -1686,7 +1686,7 @@ const actions = {
     save(); render();
   },
   setLesson: el => {
-    if (groupLocked()) return;
+    groupPresence('setup:lesson');
     const m = state.meta;
     // 같은 차시를 다시 고르면 진행 중인 탐구를 그대로 이어 감
     if (m.lesson === el.dataset.value && Number(m.lessonNo) === Number(el.dataset.no) && !(m.customLesson || '').trim()) return;
@@ -1845,7 +1845,6 @@ const actions = {
     renderGroupBox();
   },
   groupCreate: () => {
-    if (!unitName()) return toast('먼저 위에서 수업(단원·차시)을 골라 주세요.', 'warn');
     groupCreate();
   },
   groupJoin: () => groupJoin(($('#groupCode') || {}).value),
@@ -1967,14 +1966,8 @@ document.addEventListener('toggle', e => {
   }
 }, true);
 
-function groupLocked() {
-  if (typeof inGroup !== 'function' || !inGroup()) return false;
-  toast('모둠 탐구 중에는 수업(단원·차시)을 바꿀 수 없어요. 바꾸려면 [모둠 나가기]를 먼저 하세요.', 'warn');
-  return true;
-}
 function onBind(el) {
   const path = el.dataset.bind;
-  if ((path === 'meta.customUnit' || path === 'meta.customLesson') && groupLocked()) { el.value = getPath(state, path) || ''; return; }
   let v = el.type === 'checkbox' ? el.checked : el.value;
   if (el.type === 'number') v = el.value === '' ? '' : Number(el.value);
   // 단원·차시를 직접 입력해 다른 수업으로 바꾸는 경우에도 이전 탐구를 지움

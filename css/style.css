@@ -535,6 +535,7 @@ table.stats td:first-child, table.stats th:first-child { text-align: left; }
 .group-bar .g-status.warn { color: #c2410c; }
 .group-bar .g-note { color: var(--primary); font-weight: 600; }
 .editing-by { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 999px; background: #fef3c7; color: #92400e; font-size: 12px; font-weight: 700; }
+.sel-row h3 .editing-by { display: block; width: max-content; margin: 6px 0 0; }
 @media (max-width: 640px) {
   .mode-cards, .group-actions { grid-template-columns: 1fr; }
   .group-bar { padding: 6px 16px; }
