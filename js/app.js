@@ -46,7 +46,7 @@ const newState = () => ({
   data: { runs: [] },
   chat: [],
   result: { channel: '', channel2: '', axisRanges: {}, hidden: {}, analysis: '', verdict: '', conclusion: '', error: '', reflection: '', ai: null },
-  group: { mode: 'solo', code: '', role: '' }, // 모둠 탐구 연결 정보 (이 기기 전용, 모둠원과 공유하지 않음)
+  group: { mode: '', code: '', role: '' }, // 모둠 탐구 연결 정보 (이 기기 전용, 모둠원과 공유하지 않음). mode: '' 아직 안 고름, 'solo', 'group'
 });
 
 let state = load();
@@ -67,6 +67,8 @@ function load() {
       const st = deepMerge(newState(), s);
       // 예전에 줄바꿈으로 저장된 준비물은 쉼표로 이어 붙임
       if (st.design.materials) st.design.materials = st.design.materials.split(/\s*\n+\s*/).filter(Boolean).join(', ');
+      // 예전 버전이 기본값으로 저장한 '개별 탐구'는 학생이 직접 고른 것이 아니므로 선택 안 함으로 되돌림
+      if (st.group.mode === 'solo' && !st.group.picked && !st.group.code) st.group.mode = '';
       return st;
     }
   } catch (e) { /* ignore */ }
@@ -1839,7 +1841,7 @@ const actions = {
   loadJson: () => { if (inGroup()) return toast('모둠 탐구 중에는 파일을 불러올 수 없어요. 모둠에서 나간 뒤 불러오세요.', 'warn'); $('#jsonFile').click(); },
   groupMode: el => {
     if (inGroup()) return;
-    state.group.mode = el.dataset.value; save();
+    state.group.mode = el.dataset.value; state.group.picked = true; save();
     renderGroupBox();
   },
   groupCreate: () => {

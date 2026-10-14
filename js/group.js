@@ -161,7 +161,7 @@ function groupConnect(first) {
 function groupLeave(quiet) {
   if (!inGroup()) return;
   if (!quiet && !confirm('모둠에서 나갈까요? 지금까지 함께 쓴 내용은 이 기기에 그대로 남고, 다른 모둠원은 계속 쓸 수 있어요.')) return;
-  Object.assign(state.group, { mode: 'solo', code: '', role: '' });
+  Object.assign(state.group, { mode: 'solo', code: '', role: '', picked: true }); // 모둠에서 나오면 개별 탐구로 이어 씀
   try { if (group.ws) { group.ws.onclose = null; group.ws.close(); } } catch (e) { /* ignore */ }
   Object.assign(group, { ws: null, status: 'off', members: [], last: null, pending: [] });
   group.lastRuns = new Map();
@@ -343,9 +343,9 @@ function renderGroupBar() {
 }
 function groupBoxHtml() {
   const g = state.group || {};
-  const mode = g.mode || 'solo';
+  const mode = g.mode || ''; // 처음에는 아무것도 고르지 않은 상태
   const cards = `<div class="mode-cards">
-      <button class="mode-card ${mode !== 'group' ? 'on' : ''}" data-action="groupMode" data-value="solo" ${inGroup() ? 'disabled' : ''}><b>🙋 개별 탐구</b><span>혼자 보고서를 써요</span></button>
+      <button class="mode-card ${mode === 'solo' ? 'on' : ''}" data-action="groupMode" data-value="solo" ${inGroup() ? 'disabled' : ''}><b>🙋 개별 탐구</b><span>혼자 보고서를 써요</span></button>
       <button class="mode-card ${mode === 'group' ? 'on' : ''}" data-action="groupMode" data-value="group"><b>👥 모둠 탐구</b><span>모둠 코드로 친구들과 함께 써요</span></button>
     </div>`;
   if (mode !== 'group') return cards;
