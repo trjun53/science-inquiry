@@ -46,7 +46,7 @@ const newState = () => ({
   data: { runs: [] },
   chat: [],
   result: { channel: '', channel2: '', axisRanges: {}, hidden: {}, analysis: '', verdict: '', conclusion: '', error: '', reflection: '', ai: null },
-  group: { mode: 'solo', code: '', nick: '', role: '' }, // 모둠 탐구 연결 정보 (이 기기 전용, 모둠원과 공유하지 않음)
+  group: { mode: 'solo', code: '', role: '' }, // 모둠 탐구 연결 정보 (이 기기 전용, 모둠원과 공유하지 않음)
 });
 
 let state = load();
@@ -737,7 +737,7 @@ function runList() {
       const live = r.id === ui.activeRunId && driver && driver.measuring;
       return `<tr class="${live ? 'live' : ''}"><td>${i + 1}</td>
         <td><input class="inline" data-run="${r.id}" value="${esc(r.label)}"></td>
-        <td>${esc(r.device || r.brand)}${r.by ? `<br><small class="muted">${esc(r.by)} 측정</small>` : ''}</td>
+        <td>${esc(r.device || r.brand)}${r.byCid ? `<br><small class="muted">${r.byCid === groupCid() ? '내가 측정' : '모둠원 측정'}</small>` : ''}</td>
         <td>${r.channels.map(c => esc(c.name) + (c.unit ? ` (${esc(c.unit)})` : '')).join(', ')}</td>
         <td>${r.rows.length}${live ? ' <span class="rec">REC</span>' : ''}</td><td>${r.mode === 'manual' ? `수동 ${r.rows.length}회` : `${fmt(last, 1)} s`}</td>
         <td><button class="icon-btn" title="그래프 보기" data-action="showRun" data-id="${r.id}">📈</button><button class="icon-btn" title="삭제" data-action="deleteRun" data-id="${r.id}" ${live ? 'disabled' : ''}>✕</button></td></tr>`;
@@ -913,7 +913,7 @@ function viewReport() {
         <tr><th>학교급·학년·학기</th><td>${esc([m.level, m.grade, m.semester].filter(Boolean).join(' '))}</td><th>날짜</th><td>${esc(m.date)}</td></tr>
         <tr><th>단원</th><td colspan="3">${info ? `(${info.no}) ` : ''}${esc((m.group && m.group !== '과학' ? `[${m.group}] ` : '') + unitName())}${info ? ` <span class="muted">· ${FIELDS[info.field].name}${m.publisher ? ` · ${esc(m.publisher)} 교과서` : ''}</span>` : ''}</td></tr>
         ${lessonLabel() ? `<tr><th>차시</th><td colspan="3">${esc(lessonLabel())}</td></tr>` : ''}
-        ${Object.keys(m.members || {}).length ? `<tr><th>모둠 탐구</th><td colspan="3">모둠원: ${Object.values(m.members).map(esc).join(', ')}${inGroup() ? ` <span class="muted">· 모둠 코드 ${esc(state.group.code)}</span>` : ''}</td></tr>` : ''}
+        ${Object.keys(m.members || {}).length ? `<tr><th>모둠 탐구</th><td colspan="3">모둠원 ${Object.keys(m.members).length}명이 함께 탐구함${inGroup() ? ` <span class="muted">· 모둠 코드 ${esc(state.group.code)}</span>` : ''}</td></tr>` : ''}
         ${stds.length ? `<tr><th>성취기준</th><td colspan="3">${stds.map(s => `<div>[${s.code}] ${esc(s.text)}</div>`).join('')}</td></tr>` : ''}
       </tbody></table>
     </header>
@@ -1403,7 +1403,7 @@ async function startMeasure() {
   const interval = manual ? 0.2 : Math.max(0.01, Number(state.design.intervalSec) || 1);
   const run = { id: uid(), label, brand: driver.brand, device: driver.deviceName, channels: chans.map(c => ({ id: c.id, name: c.name, unit: c.unit })), rows: [], createdAt: Date.now(),
     mode: manual ? 'manual' : 'auto', xLabel: manual ? (state.design.manualX.trim() || '기록 번호') : '시간 (s)', notes: [],
-    by: inGroup() ? state.group.nick : '' };
+    byCid: inGroup() ? groupCid() : '' };
   state.data.runs.push(run);
   // 센서 2개로 처음 측정하면 분석 그래프에 두 센서 값을 함께 보이게 맞춰 둠
   // (단위가 다르면 왼쪽·오른쪽 y축, 온도 2개처럼 단위가 같으면 한 축에 겹쳐 그림)
@@ -1930,7 +1930,6 @@ document.addEventListener('input', e => {
   if (el.matches('[data-bind]') && el.type !== 'checkbox' && el.type !== 'radio') onBind(el);
   if (el.matches('textarea.auto')) autosize(el);
   if (el.id === 'runLabel') ui.runLabel = el.value;
-  if (el.id === 'groupNick') { state.group.nick = el.value.trim(); save(); }
   if (el.id === 'groupCode') el.value = el.value.toUpperCase();
   if (el.dataset.alias !== undefined) {
     const al = Array.isArray(state.design.sensorAlias) ? state.design.sensorAlias : ['', ''];

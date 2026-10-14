@@ -2,6 +2,7 @@
 // - 서버: proxy/group/group-worker.js (Cloudflare Durable Objects, 코드 하나 = 방 하나)
 // - 같이 쓰는 것: 수업·차시, 예상, 탐구 질문, 실험 설계, 측정 기록, 관찰 기록, 결론, AI 피드백
 // - 각자 쓰는 것: 보고 있는 단계, 센서 연결, 센서 이름, 탐구 도우미 대화
+// - 개인정보를 받지 않음: 이름 없이 모둠 코드만으로 참여하고, 화면에는 '모둠원'으로만 표시
 // - 바뀐 내용은 "경로: 값" 단위로 보냄. 같은 칸을 동시에 고치면 서버에 나중에 도착한 쪽이 남음
 //   (내가 보낸 값이 아직 서버에 반영되기 전이면 그 칸에 들어온 다른 사람 값은 무시 → 모두 같은 값으로 맞춰짐)
 
@@ -105,8 +106,6 @@ setInterval(() => { if (inGroup()) groupFlush(); }, GROUP_FLUSH_MS); // 측정 �
 async function groupCreate() {
   const base = groupUrl();
   if (!base) return toast('모둠 서버 주소가 설정되지 않았어요. 선생님께 알려 주세요.', 'warn');
-  const nick = (state.group.nick || '').trim();
-  if (!nick) return toast('먼저 모둠에서 쓸 이름(별칭)을 쓰세요.', 'warn');
   group.creating = true; renderGroupBox();
   try {
     const res = await fetch(base + '/room', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ doc: groupDoc(), runs: state.data.runs }) });
@@ -124,7 +123,6 @@ async function groupCreate() {
 function groupJoin(code) {
   code = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (code.length !== 6) return toast('모둠 코드 6자리를 정확히 넣어 주세요.', 'warn');
-  if (!(state.group.nick || '').trim()) return toast('먼저 모둠에서 쓸 이름(별칭)을 쓰세요.', 'warn');
   if (hasInquiryContent() && !confirm('모둠에 참여하면 이 기기에서 쓰던 탐구 내용 대신 모둠의 보고서를 함께 쓰게 돼요.\n(지금 내용이 필요하면 [취소]를 누르고 먼저 [파일 저장]을 하세요)\n참여할까요?')) return;
   Object.assign(state.group, { mode: 'group', code, role: 'member' });
   save(true);
@@ -137,7 +135,7 @@ function groupConnect(first) {
   group.status = first ? 'connecting' : 'retry';
   group.firstJoin = !!first || !group.last;
   renderGroupBar();
-  const url = `${base.replace(/^http/, 'ws')}/room/${state.group.code}/ws?cid=${encodeURIComponent(groupCid())}&nick=${encodeURIComponent(state.group.nick || '모둠원')}`;
+  const url = `${base.replace(/^http/, 'ws')}/room/${state.group.code}/ws?cid=${encodeURIComponent(groupCid())}&nick=${encodeURIComponent('모둠원')}`;
   const ws = new WebSocket(url);
   group.ws = ws;
   ws.onmessage = e => { let m; try { m = JSON.parse(e.data); } catch (x) { return; } groupOnMessage(m); };
@@ -204,9 +202,9 @@ function groupOnInit(m) {
   group.pending = [];
   // 끊긴 동안의 변경을 다시 적용 (같은 칸은 내 값이 남음)
   [...unsent, ...offline].forEach(op => groupApplyOp(op, true));
-  // 보고서에 들어갈 모둠원 목록에 내 별칭 넣기 (경로가 사람마다 달라 동시에 들어와도 지워지지 않음)
+  // 보고서에 들어갈 모둠원 수를 세기 위해 이 기기를 기록 (이름은 받지 않음, 경로가 기기마다 달라 동시에 들어와도 지워지지 않음)
   state.meta.members = state.meta.members || {};
-  if (state.group.nick && state.meta.members[groupCid()] !== state.group.nick) state.meta.members[groupCid()] = state.group.nick;
+  if (state.meta.members[groupCid()] !== true) state.meta.members[groupCid()] = true;
   group.status = 'online';
   group.firstJoin = false;
   save(true);
@@ -287,7 +285,7 @@ function groupRefreshRuns(streamingId, nick) {
     const list = $('#runList'); if (list) list.innerHTML = runList();
     const cnt = document.querySelector('.card-head .count'); if (cnt) cnt.textContent = state.data.runs.length;
     updateLive();
-    if (nick && streamingId) groupNote(`${nick} 님이 측정한 데이터가 들어오고 있어요`);
+    if (streamingId) groupNote('모둠원이 측정한 데이터가 들어오고 있어요');
   } else if (['analysis', 'conclusion', 'report'].includes(step)) groupRefresh(false);
 }
 // 화면 전체 다시 그리기: 글을 쓰는 중이면 그 칸에서 나올 때까지 미룸, 스크롤 위치는 유지
@@ -315,7 +313,7 @@ function groupShowEditors() {
     if (!label) return;
     const tag = document.createElement('span');
     tag.className = 'editing-by';
-    tag.textContent = `✎ ${mb.nick} 입력 중`;
+    tag.textContent = '✎ 모둠원 작성 중';
     label.appendChild(tag);
   });
 }
@@ -334,10 +332,12 @@ function renderGroupBar() {
   if (!bar) return;
   if (!inGroup()) { bar.hidden = true; bar.innerHTML = ''; return; }
   const st = { online: ['ok', '연결됨'], connecting: ['', '연결 중…'], retry: ['warn', '다시 연결하는 중… (쓰는 내용은 연결되면 함께 보내져요)'], off: ['warn', '연결 끊김'] }[group.status] || ['', ''];
-  const names = group.members.map(mb => `${esc(mb.nick)}${mb.cid === groupCid() ? '(나)' : ''}${mb.focus && mb.cid !== groupCid() ? ' ✎' : ''}`).join(', ');
+  const n = group.members.length;
+  const writing = group.members.filter(mb => mb.focus && mb.cid !== groupCid()).length;
+  const names = n ? `모둠원 ${n}명 접속 중(나 포함)${writing ? ` · ${writing}명 작성 중` : ''}` : '';
   bar.hidden = false;
   bar.innerHTML = `<span class="g-code">👥 모둠 <b>${esc(state.group.code)}</b></span>
-    <span class="g-members">${names || '모둠원을 기다리는 중'}</span>
+    <span class="g-members">${names || '연결 중…'}</span>
     <span class="g-status ${st[0]}">● ${st[1]}</span><span id="groupNote" class="g-note"></span>`;
   groupShowEditors();
 }
@@ -354,14 +354,13 @@ function groupBoxHtml() {
     <div class="group-box joined">
       <div class="g-big">${esc(g.code)}</div>
       <p>${g.role === 'leader' ? '친구들에게 이 <b>모둠 코드</b>를 알려 주세요. 친구들은 첫 화면의 [모둠 탐구]에서 코드를 넣으면 함께 쓸 수 있어요.' : '모둠에 참여했어요. 모둠원과 같은 보고서를 함께 쓰고 있어요.'}</p>
-      <p class="muted small">모둠원(지금 접속): ${group.members.map(mb => esc(mb.nick) + (mb.cid === groupCid() ? '(나)' : '')).join(', ') || '연결 중…'} · 모둠 탐구 중에는 수업(단원·차시)을 바꿀 수 없어요.</p>
+      <p class="muted small">지금 접속한 모둠원: ${group.members.length ? `${group.members.length}명(나 포함)` : '연결 중…'} · 모둠 탐구 중에는 수업(단원·차시)을 바꿀 수 없어요.</p>
       <button class="btn small ghost" data-action="groupLeave">모둠 나가기</button>
     </div>`;
   }
   return `${cards}
     <div class="group-box">
-      <label class="field"><span>모둠에서 쓸 이름(별칭) <small>실명 대신 별칭을 써도 돼요</small></span>
-        <input id="groupNick" value="${esc(g.nick || '')}" maxlength="12" placeholder="예: 지민, 1모둠 기록이"></label>
+      <p class="muted small" style="margin-top:0">이름은 쓰지 않아요. 모둠 코드만 있으면 함께 쓸 수 있어요.</p>
       <div class="group-actions">
         <div><p class="muted small">모둠에서 한 명만 만들어요</p>
           <button class="btn primary" data-action="groupCreate" ${group.creating ? 'disabled' : ''}>${group.creating ? '만드는 중…' : '새 모둠 만들기'}</button></div>
