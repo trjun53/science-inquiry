@@ -39,13 +39,14 @@ const QUESTION_CHECKS = [
 const today = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
 const newState = () => ({
   step: 0,
-  meta: { level: '', grade: '', semester: '', publisher: '', std: '', group: '', unit: '', customUnit: '', standards: [], lessonNo: 0, lesson: '', customLesson: '', topic: '', name: '', date: today() },
+  meta: { level: '', grade: '', semester: '', publisher: '', std: '', group: '', unit: '', customUnit: '', standards: [], lessonNo: 0, lesson: '', customLesson: '', topic: '', name: '', date: today(), members: {} },
   expId: '',
   question: { observation: '', pre: {}, preReason: '', qIv: '', qDv: '', question: '', hypothesis: '', checks: {} },
   design: { iv: '', ivLevels: '', dv: '', sensor: '', controls: [''], materials: '', procedure: [''], intervalSec: 1, durationSec: 60, measureMode: 'auto', manualX: '', safety: {}, safetyItems: [], safetyNote: '', appliedExp: '', sensorAlias: ['', ''] },
   data: { runs: [] },
   chat: [],
   result: { channel: '', channel2: '', axisRanges: {}, hidden: {}, analysis: '', verdict: '', conclusion: '', error: '', reflection: '', ai: null },
+  group: { mode: 'solo', code: '', nick: '', role: '' }, // 모둠 탐구 연결 정보 (이 기기 전용, 모둠원과 공유하지 않음)
 });
 
 let state = load();
@@ -86,6 +87,7 @@ function save(now) {
     catch (e) { setSaved(false); }
   };
   if (now) doSave(); else saveTimer = setTimeout(doSave, 400);
+  if (typeof groupSchedule === 'function') groupSchedule();
 }
 function setSaved(ok) {
   const el = document.getElementById('saveState');
@@ -229,6 +231,9 @@ function viewSetup() {
       </div>
       <div class="sel-row ${unitName() ? '' : 'disabled'}"><h3><b>6</b> 차시</h3>
         <div id="lessonBox">${unitName() ? lessonPicker() : '<span class="muted">단원을 먼저 선택하세요</span>'}</div>
+      </div>
+      <div class="sel-row"><h3><b>7</b> 탐구 방식</h3>
+        <div id="groupBox">${groupBoxHtml()}</div>
       </div>
       <p class="note">${isElem()
         ? '※ 초등은 2022 개정 교육과정 성취기준과 교과서별 지도서 자료(source 폴더)를 바탕으로 합니다. 센서 표시와 탐구 예시는 해당 학년 교육과정 범위 안의 활동만 골랐어요.'
@@ -732,7 +737,7 @@ function runList() {
       const live = r.id === ui.activeRunId && driver && driver.measuring;
       return `<tr class="${live ? 'live' : ''}"><td>${i + 1}</td>
         <td><input class="inline" data-run="${r.id}" value="${esc(r.label)}"></td>
-        <td>${esc(r.device || r.brand)}</td>
+        <td>${esc(r.device || r.brand)}${r.by ? `<br><small class="muted">${esc(r.by)} 측정</small>` : ''}</td>
         <td>${r.channels.map(c => esc(c.name) + (c.unit ? ` (${esc(c.unit)})` : '')).join(', ')}</td>
         <td>${r.rows.length}${live ? ' <span class="rec">REC</span>' : ''}</td><td>${r.mode === 'manual' ? `수동 ${r.rows.length}회` : `${fmt(last, 1)} s`}</td>
         <td><button class="icon-btn" title="그래프 보기" data-action="showRun" data-id="${r.id}">📈</button><button class="icon-btn" title="삭제" data-action="deleteRun" data-id="${r.id}" ${live ? 'disabled' : ''}>✕</button></td></tr>`;
@@ -908,6 +913,7 @@ function viewReport() {
         <tr><th>학교급·학년·학기</th><td>${esc([m.level, m.grade, m.semester].filter(Boolean).join(' '))}</td><th>날짜</th><td>${esc(m.date)}</td></tr>
         <tr><th>단원</th><td colspan="3">${info ? `(${info.no}) ` : ''}${esc((m.group && m.group !== '과학' ? `[${m.group}] ` : '') + unitName())}${info ? ` <span class="muted">· ${FIELDS[info.field].name}${m.publisher ? ` · ${esc(m.publisher)} 교과서` : ''}</span>` : ''}</td></tr>
         ${lessonLabel() ? `<tr><th>차시</th><td colspan="3">${esc(lessonLabel())}</td></tr>` : ''}
+        ${Object.keys(m.members || {}).length ? `<tr><th>모둠 탐구</th><td colspan="3">모둠원: ${Object.values(m.members).map(esc).join(', ')}${inGroup() ? ` <span class="muted">· 모둠 코드 ${esc(state.group.code)}</span>` : ''}</td></tr>` : ''}
         ${stds.length ? `<tr><th>성취기준</th><td colspan="3">${stds.map(s => `<div>[${s.code}] ${esc(s.text)}</div>`).join('')}</td></tr>` : ''}
       </tbody></table>
     </header>
@@ -953,6 +959,7 @@ function viewReport() {
 function autosize(el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 2 + 'px'; }
 function afterRender(step) {
   setSaved(true);
+  if (typeof groupShowEditors === 'function') groupShowEditors();
   document.querySelectorAll('textarea.auto').forEach(autosize);
   if (step === 'connect' || step === 'measure') { updateLive(); updateMeasureButtons(); }
   if (step === 'analysis') { drawResult('#resultChart'); drawObsCharts('obsA'); }
@@ -1395,7 +1402,8 @@ async function startMeasure() {
   // 수동 기록은 화면 값을 0.2초마다 갱신하고, 기록은 버튼으로만 함
   const interval = manual ? 0.2 : Math.max(0.01, Number(state.design.intervalSec) || 1);
   const run = { id: uid(), label, brand: driver.brand, device: driver.deviceName, channels: chans.map(c => ({ id: c.id, name: c.name, unit: c.unit })), rows: [], createdAt: Date.now(),
-    mode: manual ? 'manual' : 'auto', xLabel: manual ? (state.design.manualX.trim() || '기록 번호') : '시간 (s)', notes: [] };
+    mode: manual ? 'manual' : 'auto', xLabel: manual ? (state.design.manualX.trim() || '기록 번호') : '시간 (s)', notes: [],
+    by: inGroup() ? state.group.nick : '' };
   state.data.runs.push(run);
   // 센서 2개로 처음 측정하면 분석 그래프에 두 센서 값을 함께 보이게 맞춰 둠
   // (단위가 다르면 왼쪽·오른쪽 y축, 온도 2개처럼 단위가 같으면 한 축에 겹쳐 그림)
@@ -1602,6 +1610,8 @@ const actions = {
     if (state.step !== 0) { state.step = 0; save(); render(); return; }
     // 첫 화면에서 제목을 누르면 선택과 기록을 모두 지우고 새로 시작
     if (hasInquiryContent() && !confirm('처음 상태로 되돌릴까요? 선택한 수업과 지금까지의 탐구 기록이 모두 지워집니다.\n(남겨 두려면 [취소]를 누르고 먼저 [파일 저장]을 하세요)')) return;
+    if (inGroup() && !confirm('모둠 탐구 중이에요. 처음 상태로 되돌리면 이 기기는 모둠에서 나가요. 계속할까요?')) return;
+    groupLeave(true);
     if (driver && driver.connected) await driver.disconnect();
     clearTimeout(saveTimer);
     state = newState();
@@ -1633,14 +1643,17 @@ const actions = {
     state.step = Math.min(STEPS.length - 1, state.step + 1); save(); render();
   },
   setLevel: el => {
+    if (groupLocked()) return;
     if (el.dataset.value === state.meta.level || !startNewInquiry()) return;
     Object.assign(state.meta, { level: el.dataset.value, grade: '', semester: '', unit: '', std: '', group: '', ...NO_LESSON }); save(); render();
   },
   setGrade: el => {
+    if (groupLocked()) return;
     if (el.dataset.value === state.meta.grade || !startNewInquiry()) return;
     Object.assign(state.meta, { grade: el.dataset.value, semester: '', unit: '', std: '', group: '', ...NO_LESSON }); save(); render();
   },
   setSemester: el => {
+    if (groupLocked()) return;
     const m = state.meta;
     if (el.dataset.value === m.semester || !startNewInquiry()) return;
     Object.assign(m, { semester: el.dataset.value, unit: '', std: '', group: '', ...NO_LESSON });
@@ -1648,6 +1661,7 @@ const actions = {
     save(); render();
   },
   setPublisher: el => {
+    if (groupLocked()) return;
     const m = state.meta;
     if (el.dataset.value === m.publisher || !startNewInquiry()) return;
     m.publisher = el.dataset.value;
@@ -1660,6 +1674,7 @@ const actions = {
     save(); render();
   },
   setUnit: el => {
+    if (groupLocked()) return;
     const m = state.meta;
     const changed = (m.std || m.unit) !== (el.dataset.std || el.dataset.value) || m.customUnit.trim();
     if (!changed) return;
@@ -1669,6 +1684,7 @@ const actions = {
     save(); render();
   },
   setLesson: el => {
+    if (groupLocked()) return;
     const m = state.meta;
     // 같은 차시를 다시 고르면 진행 중인 탐구를 그대로 이어 감
     if (m.lesson === el.dataset.value && Number(m.lessonNo) === Number(el.dataset.no) && !(m.customLesson || '').trim()) return;
@@ -1820,9 +1836,21 @@ const actions = {
   },
   print: () => window.print(),
   saveJson: () => download(`탐구보고서_${state.meta.name || '학생'}_${state.meta.date || today()}.json`, JSON.stringify(state, null, 1), 'application/json'),
-  loadJson: () => $('#jsonFile').click(),
+  loadJson: () => { if (inGroup()) return toast('모둠 탐구 중에는 파일을 불러올 수 없어요. 모둠에서 나간 뒤 불러오세요.', 'warn'); $('#jsonFile').click(); },
+  groupMode: el => {
+    if (inGroup()) return;
+    state.group.mode = el.dataset.value; save();
+    renderGroupBox();
+  },
+  groupCreate: () => {
+    if (!unitName()) return toast('먼저 위에서 수업(단원·차시)을 골라 주세요.', 'warn');
+    groupCreate();
+  },
+  groupJoin: () => groupJoin(($('#groupCode') || {}).value),
+  groupLeave: () => groupLeave(false),
   reset: async () => {
-    if (!confirm('새 보고서를 시작할까요? 탐구 질문, 예상, 점검 체크, 실험 설계, 측정 데이터, 결론, 피드백, 대화가 모두 지워집니다. (필요하면 먼저 [파일 저장]을 하세요)')) return;
+    if (!confirm(inGroup() ? '새 보고서를 시작할까요? 이 기기는 모둠에서 나가고 처음부터 시작해요. (모둠의 보고서는 다른 모둠원에게 그대로 남아요)' : '새 보고서를 시작할까요? 탐구 질문, 예상, 점검 체크, 실험 설계, 측정 데이터, 결론, 피드백, 대화가 모두 지워집니다. (필요하면 먼저 [파일 저장]을 하세요)')) return;
+    groupLeave(true);
     if (driver && driver.connected) await driver.disconnect();
     // 화면에 남은 입력값·임시 상태까지 모두 없애도록 완전히 새로 시작
     clearTimeout(saveTimer);
@@ -1902,6 +1930,8 @@ document.addEventListener('input', e => {
   if (el.matches('[data-bind]') && el.type !== 'checkbox' && el.type !== 'radio') onBind(el);
   if (el.matches('textarea.auto')) autosize(el);
   if (el.id === 'runLabel') ui.runLabel = el.value;
+  if (el.id === 'groupNick') { state.group.nick = el.value.trim(); save(); }
+  if (el.id === 'groupCode') el.value = el.value.toUpperCase();
   if (el.dataset.alias !== undefined) {
     const al = Array.isArray(state.design.sensorAlias) ? state.design.sensorAlias : ['', ''];
     al[Number(el.dataset.alias)] = el.value;
@@ -1924,6 +1954,7 @@ document.addEventListener('input', e => {
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && $('#noticeModal')) { actions.closeNotice(); return; }
   if (e.key === 'Enter' && e.target.id === 'recX' && !e.isComposing) { e.preventDefault(); recordValue(); }
+  if (e.key === 'Enter' && e.target.id === 'groupCode' && !e.isComposing) { e.preventDefault(); groupJoin(e.target.value); }
   // 탐구 도우미: Enter로 보내기, Shift+Enter는 줄바꿈
   if (e.key === 'Enter' && !e.shiftKey && e.target.id === 'chatInput' && !e.isComposing) { e.preventDefault(); chatSend(e.target.value); }
 });
@@ -1935,8 +1966,14 @@ document.addEventListener('toggle', e => {
   }
 }, true);
 
+function groupLocked() {
+  if (typeof inGroup !== 'function' || !inGroup()) return false;
+  toast('모둠 탐구 중에는 수업(단원·차시)을 바꿀 수 없어요. 바꾸려면 [모둠 나가기]를 먼저 하세요.', 'warn');
+  return true;
+}
 function onBind(el) {
   const path = el.dataset.bind;
+  if ((path === 'meta.customUnit' || path === 'meta.customLesson') && groupLocked()) { el.value = getPath(state, path) || ''; return; }
   let v = el.type === 'checkbox' ? el.checked : el.value;
   if (el.type === 'number') v = el.value === '' ? '' : Number(el.value);
   // 단원·차시를 직접 입력해 다른 수업으로 바꾸는 경우에도 이전 탐구를 지움
@@ -1984,3 +2021,5 @@ window.addEventListener('beforeunload', e => {
 
 attachDriver(driver);
 render();
+renderGroupBar();
+if (inGroup()) groupConnect(true); // 새로고침해도 같은 모둠에 다시 연결

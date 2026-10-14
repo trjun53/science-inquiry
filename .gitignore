@@ -7,5 +7,5 @@ source/
 .env
 .env.*
 *.secret
-proxy/.wrangler/
+**/.wrangler/
 node_modules/

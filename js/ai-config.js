@@ -2,4 +2,6 @@
 // 키는 Cloudflare 중계 서버(proxy/ai-proxy-worker.js)의 비밀값 UPSTAGE_API_KEY에만 있습니다.
 window.AI_CONFIG = {
   proxyUrl: 'https://science-ai.seoul-science-inquiry.workers.dev',
+  // 모둠 탐구 서버(proxy/group/group-worker.js) 주소
+  groupUrl: 'https://science-group.seoul-science-inquiry.workers.dev',
 };

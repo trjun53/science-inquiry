@@ -1,0 +1,19 @@
+# 모둠 탐구 서버 배포 설정 — Cloudflare Workers + Durable Objects
+# 배포:      npx wrangler deploy        (proxy/group 폴더에서)
+# 시험 실행: npx wrangler dev --port 8787
+name = "science-group"
+main = "group-worker.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "GroupRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["GroupRoom"]
+
+[vars]
+# 이 주소에서 온 요청만 받음 (쉼표로 구분)
+ALLOWED_ORIGINS = "https://trjun53.github.io,http://localhost:8080,http://127.0.0.1:8080"

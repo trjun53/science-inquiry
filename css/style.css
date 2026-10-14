@@ -511,3 +511,31 @@ table.stats td:first-child, table.stats th:first-child { text-align: left; }
   .report { box-shadow: none; padding: 0; max-width: none; }
   .report section, .report figure, .report table { break-inside: avoid; }
 }
+
+/* 모둠 탐구 */
+.mode-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.mode-card { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; padding: 12px 14px; border: 1.5px solid var(--line); border-radius: 14px; background: #fff; cursor: pointer; text-align: left; font: inherit; }
+.mode-card b { font-size: 15px; }
+.mode-card span { font-size: 13px; color: var(--ink2); }
+.mode-card.on { border-color: var(--primary); background: var(--primary-soft); }
+.mode-card:disabled { cursor: default; opacity: .6; }
+.group-box { margin-top: 12px; padding: 14px; border: 1px dashed var(--line); border-radius: 14px; background: #fafcff; }
+.group-box .field { margin-bottom: 10px; }
+.group-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.group-actions p { margin: 0 0 6px; }
+.join-row { display: flex; gap: 6px; }
+.join-row input { width: 8em; text-transform: uppercase; letter-spacing: .15em; font-weight: 700; }
+.group-box.joined { border-style: solid; border-color: var(--primary); text-align: center; }
+.group-box.joined p { margin: 6px 0; }
+.g-big { font-size: 34px; font-weight: 800; letter-spacing: .25em; color: var(--primary); }
+.group-bar { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; padding: 6px 24px; background: #eef4ff; border-bottom: 1px solid var(--line); font-size: 13.5px; }
+.group-bar .g-members { color: var(--ink2); }
+.group-bar .g-status { font-weight: 600; color: var(--ink2); }
+.group-bar .g-status.ok { color: var(--ok); }
+.group-bar .g-status.warn { color: #c2410c; }
+.group-bar .g-note { color: var(--primary); font-weight: 600; }
+.editing-by { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 999px; background: #fef3c7; color: #92400e; font-size: 12px; font-weight: 700; }
+@media (max-width: 640px) {
+  .mode-cards, .group-actions { grid-template-columns: 1fr; }
+  .group-bar { padding: 6px 16px; }
+}
