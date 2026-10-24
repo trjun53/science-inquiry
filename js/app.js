@@ -1044,10 +1044,11 @@ function hasInquiryContent() {
     || (state.chat || []).length);
 }
 // 수업(차시)이 바뀌면 이전 탐구 기록을 지움. 내용이 있으면 먼저 물어봄. 계속 진행하면 true
-function startNewInquiry() {
+async function startNewInquiry() {
   if (!hasInquiryContent()) { clearInquiry(); return true; }
   const label = [unitName(), lessonLabel()].filter(Boolean).join(' · ') || '이전 탐구';
-  const ok = confirm(`다른 수업을 고르면 지금까지의 탐구 기록(${label})이 지워져요.${typeof inGroup === 'function' && inGroup() ? '\n모둠 탐구 중이라 모둠원 모두의 화면에서도 함께 지워져요.' : ''}\n탐구 질문, 예상, 점검 체크, 측정 데이터, 결론, 피드백이 모두 사라집니다.\n\n남겨 두려면 [취소]를 누르고 먼저 [파일 저장]을 하세요.\n새 수업으로 바꿀까요?`);
+  const ok = await askConfirm(`다른 수업을 고르면 지금까지의 탐구 기록(${label})이 지워져요.${typeof inGroup === 'function' && inGroup() ? '\n모둠 탐구 중이라 모둠원 모두의 화면에서도 함께 지워져요.' : ''}\n탐구 질문, 예상, 점검 체크, 측정 데이터, 결론, 피드백이 모두 사라집니다.\n\n남겨 두려면 [취소]를 누르고 먼저 [파일 저장]을 하세요.`,
+    { title: '다른 수업으로 바꿀까요?', ok: '새 수업으로 바꾸기', danger: true });
   if (ok) { clearInquiry(); toast('이전 탐구 기록을 지우고 새 수업을 시작해요.'); }
   return ok;
 }
@@ -1181,6 +1182,36 @@ function blockedBefore(to) {
   }
   return false;
 }
+// 브라우저 기본 확인 창(confirm) 대신 쓰는 확인 창
+// - 브라우저에서 "추가 대화상자 차단"을 누르면 confirm은 아무것도 묻지 않고 '취소'로 끝나 버튼이 동작하지 않는 것처럼 보임
+// - 결과는 Promise(true/false)로 돌려줌
+function askConfirm(message, opts = {}) {
+  const old = $('#confirmModal'); if (old) old.remove();
+  return new Promise(resolve => {
+    document.body.insertAdjacentHTML('beforeend', `
+      <div class="modal-back" id="confirmModal" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle">
+        <div class="modal confirm">
+          <h3 id="confirmTitle">${esc(opts.title || '확인해 주세요')}</h3>
+          <p>${nl2br(message)}</p>
+          <div class="row-end">
+            <button class="btn ghost" data-confirm="no">${esc(opts.cancel || '취소')}</button>
+            <button class="btn ${opts.danger ? 'danger' : 'primary'}" data-confirm="yes">${esc(opts.ok || '확인')}</button>
+          </div>
+        </div>
+      </div>`);
+    const box = $('#confirmModal');
+    const done = v => { document.removeEventListener('keydown', onKey, true); box.remove(); resolve(v); };
+    const onKey = e => { if (e.key === 'Escape') { e.stopPropagation(); done(false); } };
+    document.addEventListener('keydown', onKey, true);
+    box.addEventListener('click', e => {
+      const b = e.target.closest('[data-confirm]');
+      if (b) done(b.dataset.confirm === 'yes');
+      else if (e.target === box) done(false);
+    });
+    box.querySelector('[data-confirm="yes"]').focus();
+  });
+}
+
 function showNotice(key, items) {
   const title = key === 'predict' ? '좋은 탐구 질문인지 점검해 주세요' : '안전 점검을 모두 확인해 주세요';
   const lead = key === 'predict'
@@ -1611,8 +1642,8 @@ const actions = {
   home: async () => {
     if (state.step !== 0) { state.step = 0; save(); render(); return; }
     // 첫 화면에서 제목을 누르면 선택과 기록을 모두 지우고 새로 시작
-    if (hasInquiryContent() && !confirm('처음 상태로 되돌릴까요? 선택한 수업과 지금까지의 탐구 기록이 모두 지워집니다.\n(남겨 두려면 [취소]를 누르고 먼저 [파일 저장]을 하세요)')) return;
-    if (inGroup() && !confirm('모둠 탐구 중이에요. 처음 상태로 되돌리면 이 기기는 모둠에서 나가요. 계속할까요?')) return;
+    if (hasInquiryContent() && !(await askConfirm('선택한 수업과 지금까지의 탐구 기록이 모두 지워집니다.\n(남겨 두려면 [취소]를 누르고 먼저 [파일 저장]을 하세요)', { title: '처음 상태로 되돌릴까요?', ok: '처음으로', danger: true }))) return;
+    if (inGroup() && !(await askConfirm('처음 상태로 되돌리면 이 기기는 모둠에서 나가요.', { title: '모둠 탐구 중이에요', ok: '나가고 처음으로', danger: true }))) return;
     groupLeave(true);
     if (driver && driver.connected) await driver.disconnect();
     clearTimeout(saveTimer);
@@ -1637,35 +1668,35 @@ const actions = {
   chatToggle: () => { ui.chatOpen = !ui.chatOpen; renderChat(); if (ui.chatOpen) { const i = $('#chatInput'); if (i && !i.disabled) i.focus(); } },
   chatSend: () => { const i = $('#chatInput'); chatSend(i ? i.value : ''); },
   chatSuggest: el => chatSend(el.dataset.value),
-  chatClear: () => { if (!confirm('탐구 도우미와 나눈 대화를 지울까요?')) return; state.chat = []; save(); renderChat(); },
+  chatClear: async () => { if (!(await askConfirm('탐구 도우미와 나눈 대화를 지울까요?', { ok: '지우기', danger: true }))) return; state.chat = []; save(); renderChat(); },
   prev: () => { state.step = Math.max(0, state.step - 1); save(); render(); },
   next: () => {
     if (state.step === 0 && !unitName()) return toast('학교급·학년·학기·단원을 선택하세요.', 'warn');
     if (blockedBefore(state.step + 1)) return;
     state.step = Math.min(STEPS.length - 1, state.step + 1); save(); render();
   },
-  setLevel: el => {
+  setLevel: async el => {
     groupPresence('setup:level');
-    if (el.dataset.value === state.meta.level || !startNewInquiry()) return;
+    if (el.dataset.value === state.meta.level || !(await startNewInquiry())) return;
     Object.assign(state.meta, { level: el.dataset.value, grade: '', semester: '', unit: '', std: '', group: '', ...NO_LESSON }); save(); render();
   },
-  setGrade: el => {
+  setGrade: async el => {
     groupPresence('setup:grade');
-    if (el.dataset.value === state.meta.grade || !startNewInquiry()) return;
+    if (el.dataset.value === state.meta.grade || !(await startNewInquiry())) return;
     Object.assign(state.meta, { grade: el.dataset.value, semester: '', unit: '', std: '', group: '', ...NO_LESSON }); save(); render();
   },
-  setSemester: el => {
+  setSemester: async el => {
     groupPresence('setup:semester');
     const m = state.meta;
-    if (el.dataset.value === m.semester || !startNewInquiry()) return;
+    if (el.dataset.value === m.semester || !(await startNewInquiry())) return;
     Object.assign(m, { semester: el.dataset.value, unit: '', std: '', group: '', ...NO_LESSON });
     if (m.publisher && !publishersFor(m.grade, m.semester).includes(m.publisher)) m.publisher = '';
     save(); render();
   },
-  setPublisher: el => {
+  setPublisher: async el => {
     groupPresence('setup:publisher');
     const m = state.meta;
-    if (el.dataset.value === m.publisher || !startNewInquiry()) return;
+    if (el.dataset.value === m.publisher || !(await startNewInquiry())) return;
     m.publisher = el.dataset.value;
     // 같은 단원을 고른 상태면 그 교과서의 단원명으로 바꾸고 차시는 다시 고르게 함
     if (m.std) {
@@ -1675,22 +1706,22 @@ const actions = {
     }
     save(); render();
   },
-  setUnit: el => {
+  setUnit: async el => {
     groupPresence('setup:unit');
     const m = state.meta;
     const changed = (m.std || m.unit) !== (el.dataset.std || el.dataset.value) || m.customUnit.trim();
     if (!changed) return;
-    if (!startNewInquiry()) return;
+    if (!(await startNewInquiry())) return;
     Object.assign(m, NO_LESSON);
     Object.assign(m, { unit: el.dataset.value, std: el.dataset.std || '', group: el.dataset.group, customUnit: '' });
     save(); render();
   },
-  setLesson: el => {
+  setLesson: async el => {
     groupPresence('setup:lesson');
     const m = state.meta;
     // 같은 차시를 다시 고르면 진행 중인 탐구를 그대로 이어 감
     if (m.lesson === el.dataset.value && Number(m.lessonNo) === Number(el.dataset.no) && !(m.customLesson || '').trim()) return;
-    if (!startNewInquiry()) return;
+    if (!(await startNewInquiry())) return;
     Object.assign(m, { lessonNo: Number(el.dataset.no), lesson: el.dataset.value, customLesson: '' });
     // 다른 차시를 고르면 이전 차시의 성취기준 선택은 해제하고, 이 차시의 성취기준만 선택
     const std = el.dataset.std;
@@ -1805,9 +1836,9 @@ const actions = {
   startMeasure: () => startMeasure(),
   stopMeasure: () => stopMeasure(),
   showRun: el => { ui.showRunId = el.dataset.id; updateLive(); $('#liveChart').scrollIntoView({ behavior: 'smooth', block: 'center' }); },
-  deleteRun: el => {
+  deleteRun: async el => {
     const run = state.data.runs.find(r => r.id === el.dataset.id);
-    if (!run || !confirm(`"${run.label}" 측정 기록을 삭제할까요?`)) return;
+    if (!run || !(await askConfirm(`"${run.label}" 측정 기록을 삭제할까요?`, { ok: '삭제', danger: true }))) return;
     state.data.runs = state.data.runs.filter(r => r.id !== run.id);
     if (ui.showRunId === run.id) ui.showRunId = null;
     save(); $('#runList').innerHTML = runList(); updateLive();
@@ -1823,8 +1854,8 @@ const actions = {
     ui.advOpen = true; refreshBrandPanel(); updateLive();
     toast('설정을 저장했습니다. 이름 필터·서비스 UUID 변경은 다시 연결할 때 적용됩니다.');
   },
-  resetConfig: () => {
-    if (!confirm('이 제조사의 데이터 해석 설정을 기본값으로 되돌릴까요?')) return;
+  resetConfig: async () => {
+    if (!(await askConfirm('이 제조사의 데이터 해석 설정을 기본값으로 되돌릴까요?', { ok: '기본값으로' }))) return;
     localStorage.removeItem('sensor-config-' + ui.brand);
     ui.cfg = getBrandConfig(ui.brand);
     if (sd() && sd().brand === ui.brand && sd().applyDecoder) { sd().config = ui.cfg; sd().applyDecoder(ui.cfg.decoder); }
@@ -1850,7 +1881,7 @@ const actions = {
   groupJoin: () => groupJoin(($('#groupCode') || {}).value),
   groupLeave: () => groupLeave(false),
   reset: async () => {
-    if (!confirm(inGroup() ? '새 보고서를 시작할까요? 이 기기는 모둠에서 나가고 처음부터 시작해요. (모둠의 보고서는 다른 모둠원에게 그대로 남아요)' : '새 보고서를 시작할까요? 탐구 질문, 예상, 점검 체크, 실험 설계, 측정 데이터, 결론, 피드백, 대화가 모두 지워집니다. (필요하면 먼저 [파일 저장]을 하세요)')) return;
+    if (!(await askConfirm(inGroup() ? '이 기기는 모둠에서 나가고 처음부터 시작해요.\n(모둠의 보고서는 다른 모둠원에게 그대로 남아요)' : '탐구 질문, 예상, 점검 체크, 실험 설계, 측정 데이터, 결론, 피드백, 대화가 모두 지워집니다.\n(필요하면 먼저 [파일 저장]을 하세요)', { title: '새 보고서를 시작할까요?', ok: '새 보고서', danger: true }))) return;
     groupLeave(true);
     if (driver && driver.connected) await driver.disconnect();
     // 화면에 남은 입력값·임시 상태까지 모두 없애도록 완전히 새로 시작
@@ -1971,8 +2002,11 @@ function onBind(el) {
   let v = el.type === 'checkbox' ? el.checked : el.value;
   if (el.type === 'number') v = el.value === '' ? '' : Number(el.value);
   // 단원·차시를 직접 입력해 다른 수업으로 바꾸는 경우에도 이전 탐구를 지움
-  if ((path === 'meta.customUnit' || path === 'meta.customLesson') && hasInquiryContent() && !startNewInquiry()) {
+  if ((path === 'meta.customUnit' || path === 'meta.customLesson') && hasInquiryContent()) {
+    // 먼저 물어보고, 바꾸기로 하면 쓴 글자를 다시 넣어 이어서 처리
+    const typed = el.value;
     el.value = getPath(state, path) || '';
+    startNewInquiry().then(ok => { if (ok) { el.value = typed; onBind(el); } });
     return;
   }
   setPath(state, path, v);

@@ -120,10 +120,10 @@ async function groupCreate() {
   }
   group.creating = false; renderGroupBox();
 }
-function groupJoin(code) {
+async function groupJoin(code) {
   code = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (code.length !== 6) return toast('모둠 코드 6자리를 정확히 넣어 주세요.', 'warn');
-  if (hasInquiryContent() && !confirm('모둠에 참여하면 이 기기에서 쓰던 탐구 내용 대신 모둠의 보고서를 함께 쓰게 돼요.\n(지금 내용이 필요하면 [취소]를 누르고 먼저 [파일 저장]을 하세요)\n참여할까요?')) return;
+  if (hasInquiryContent() && !(await askConfirm('모둠에 참여하면 이 기기에서 쓰던 탐구 내용 대신 모둠의 보고서를 함께 쓰게 돼요.\n(지금 내용이 필요하면 [취소]를 누르고 먼저 [파일 저장]을 하세요)', { title: '모둠에 참여할까요?', ok: '참여하기' }))) return;
   Object.assign(state.group, { mode: 'group', code, role: 'member' });
   save(true);
   groupConnect(true);
@@ -158,9 +158,10 @@ function groupConnect(first) {
   };
   ws.onopen = () => { group.retryMs = 1000; };
 }
-function groupLeave(quiet) {
+async function groupLeave(quiet) {
   if (!inGroup()) return;
-  if (!quiet && !confirm('모둠에서 나갈까요? 지금까지 함께 쓴 내용은 이 기기에 그대로 남고, 다른 모둠원은 계속 쓸 수 있어요.')) return;
+  if (!quiet && !(await askConfirm('지금까지 함께 쓴 내용은 이 기기에 그대로 남고, 다른 모둠원은 계속 쓸 수 있어요.', { title: '모둠에서 나갈까요?', ok: '모둠 나가기' }))) return;
+  if (!inGroup()) return;
   Object.assign(state.group, { mode: 'solo', code: '', role: '', picked: true }); // 모둠에서 나오면 개별 탐구로 이어 씀
   try { if (group.ws) { group.ws.onclose = null; group.ws.close(); } } catch (e) { /* ignore */ }
   Object.assign(group, { ws: null, status: 'off', members: [], last: null, pending: [] });

@@ -540,3 +540,10 @@ table.stats td:first-child, table.stats th:first-child { text-align: left; }
   .mode-cards, .group-actions { grid-template-columns: 1fr; }
   .group-bar { padding: 6px 16px; }
 }
+
+/* 앱 안 확인 창 */
+.modal.confirm { max-width: 440px; }
+.modal.confirm p { line-height: 1.6; }
+.modal.confirm .row-end { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.btn.danger { background: #dc2626; border-color: #dc2626; color: #fff; }
+.btn.danger:hover { background: #b91c1c; }
