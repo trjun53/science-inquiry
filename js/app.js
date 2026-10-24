@@ -158,7 +158,10 @@ function renderHeader() {
 }
 
 function renderStepper() {
-  $('#stepper').innerHTML = STEPS.slice(1).map((s, k) => {
+  // 넓은 화면에서는 왼쪽에 고정된 세로 메뉴, 좁은 화면에서는 위쪽 가로 줄 (css/style.css)
+  document.body.classList.toggle('has-steps', state.step !== 0);
+  const total = STEPS.length - 1;
+  $('#stepper').innerHTML = `<div class="steps-head"><b>탐구 단계</b><span>${state.step ? `${state.step} / ${total}` : ''}</span></div>` + STEPS.slice(1).map((s, k) => {
     const i = k + 1;
     return `
     <button class="step ${i === state.step ? 'active' : ''} ${i < state.step ? 'done' : ''}" data-action="goto" data-step="${i}" ${!unitName() ? 'disabled' : ''}>
@@ -427,7 +430,7 @@ function viewQuestion() {
   return `
   <section class="page-head"><h2>예상하기</h2><p>실험하기 전에 결과를 예상해 보고, 탐구 질문과 나의 예상(가설)을 세워요.</p>
     ${lessonLabel() ? `<div class="qbanner">이번 차시: ${esc(lessonLabel())}</div>` : ''}${expPicker}</section>
-  <div class="two-col">
+  <div class="two-col stack">
     <div>
       ${first}
       <section class="card">
@@ -479,7 +482,7 @@ function viewDesign() {
   <section class="page-head"><h2>실험 설계 및 준비</h2><p>무엇을 다르게 하고 무엇을 같게 할지 정하고, 준비물과 실험 과정을 확인해요.</p>
     ${state.question.question ? `<div class="qbanner">탐구 질문: ${esc(state.question.question)}</div>` : ''}
     ${exp ? `<p class="muted small src-note">‘${esc(exp.title)}’ 실험 내용으로 채웠어요. 준비물과 실험 과정은 교과서 실험을 바탕으로 정리했고, 센서 연결부터 측정까지의 과정은 디지털 센서용으로 새로 썼어요. 우리 반에 맞게 고쳐 써도 돼요.</p>` : ''}${supportBanner()}</section>
-  <div class="two-col">
+  <div class="two-col stack">
     <div>
       <section class="card">
         <h3>① 실험 조건 정하기</h3>
@@ -856,7 +859,7 @@ function viewConclusion() {
     <div class="table-scroll" id="statsBox">${statsBoxHtml()}</div>`
     : `<p class="muted center pad">아직 측정 데이터가 없습니다. <button class="btn small" data-action="goto" data-step="${STEP.measure}">실험 및 측정하러 가기</button></p>`}
   </section>
-  <div class="two-col even">
+  <div class="two-col even stack">
     <section class="card">
       <h3>② 결론 내리기</h3>
       ${answers.length || state.question.hypothesis ? `<div class="tipbox" style="margin:0 0 14px"><strong>실험 전 나의 예상</strong>
