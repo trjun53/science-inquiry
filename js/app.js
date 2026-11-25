@@ -516,7 +516,19 @@ function viewDesign() {
         ${field('그 밖의 유의사항', 'design.safetyNote', { textarea: true, rows: 2 })}
       </section>
     </aside>
-  </div>`;
+  </div>
+  ${expFigure(exp)}`;
+}
+
+// 센서를 쓰는 실험의 장치 그림 (exp-figures.js) — 실험 설계 단계 맨 마지막에 보여 줌
+function expFigure(exp) {
+  const f = exp && typeof EXP_FIGURES !== 'undefined' ? EXP_FIGURES[exp.id] : null;
+  if (!f) return '';
+  return `<section class="card exp-fig">
+    <h3>※ 실험 장면 예시 <small class="muted">이렇게 장치를 꾸며요</small></h3>
+    <figure>${f.svg}<figcaption>${esc(f.caption)}</figcaption></figure>
+    ${f.points && f.points.length ? `<ul class="fig-points">${f.points.map(p => `<li>${esc(p)}</li>`).join('')}</ul>` : ''}
+  </section>`;
 }
 const expectN = () => {
   const d = state.design;

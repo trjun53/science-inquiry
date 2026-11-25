@@ -393,6 +393,12 @@ aside .side { position: static; }
 .status { font-weight: 600; color: var(--ink2); font-size: 14px; }
 .status.ok { color: var(--ok); }
 .channels { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+/* 실험 설계: 실험 장면 그림 */
+.exp-fig figure { margin: 10px 0 0; }
+.exp-fig svg { display: block; width: 100%; max-width: 760px; height: auto; margin: 0 auto; }
+.exp-fig figcaption { margin-top: 8px; text-align: center; font-size: 14px; color: var(--ink2); }
+.fig-points { margin: 10px auto 0; max-width: 760px; padding-left: 20px; font-size: 14px; color: var(--ink2); }
+.fig-points li + li { margin-top: 2px; }
 .ez-sensor { margin-bottom: 10px; }
 .note.ez-hint { background: #fff7ed; color: #9a3412; margin: 0 0 12px; }
 .channels em { color: var(--muted); font-style: normal; }
