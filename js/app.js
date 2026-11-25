@@ -669,17 +669,24 @@ function brandPanel() {
 
 // 이지메이커 EZ-nano: 보드에 설정된 센서 종류를 보여 주고 바꿀 수 있게 함
 function ezSensorBox(d) {
-  if (typeof EzNanoDriver === 'undefined' || !(d instanceof EzNanoDriver) || !d.proto) return '';
+  if (typeof EzNanoDriver === 'undefined' || !(d instanceof EzNanoDriver)) return '';
+  const text = d.usb && !d.proto; // USB로 숫자 줄만 받는 경우: 이름·단위만 붙임
+  if (!d.proto && !text) return '';
   const want = EZ_FOR_TYPE[state.design.sensor] || [];
+  const cur = text ? (d.textSensorId || 0) : d.sensorId;
   const opts = d.sensorOptions();
-  if (!opts.some(o => o.id === d.sensorId)) opts.unshift({ id: d.sensorId, name: `센서 ${d.sensorId}번 (알 수 없음)` });
-  const diy = d.sensorId >= 1 && d.sensorId <= 4;
-  const hint = diy
-    ? `<p class="note ez-hint">보드가 ‘${esc(EZ_SENSORS[d.sensorId][0])}’(직접 만든 센서용) 모드로 설정되어 있어서, 무슨 센서인지 알 수 없고 원시 값(숫자)만 나와요. 위에서 보드에 꽂은 센서를 골라 주세요.${want.length ? ' ★는 실험 설계에서 고른 센서에 맞는 항목이에요.' : ''}</p>`
-    : '';
-  return `<label class="field ez-sensor"><span>보드에 꽂은 센서 <small>EZ-nano 보드에 저장된 센서 종류예요. 바꾸면 보드 설정도 함께 바뀌어요(EZ·ON에서 바꾼 것과 같아요).</small></span>
+  if (text) opts.unshift({ id: 0, name: '모름 — 숫자만 표시' });
+  else if (!opts.some(o => o.id === cur)) opts.unshift({ id: cur, name: `센서 ${cur}번 (알 수 없음)` });
+  const star = want.length ? ' ★는 실험 설계에서 고른 센서에 맞는 항목이에요.' : '';
+  let hint = '';
+  if (text && !cur) hint = `<p class="note ez-hint">USB로 연결한 보드는 숫자만 보내서 무슨 센서인지 알 수 없어요. 보드에 꽂은 센서를 고르면 이름과 단위가 붙어요.${star}</p>`;
+  else if (!text && cur >= 1 && cur <= 4) hint = `<p class="note ez-hint">보드가 ‘${esc(EZ_SENSORS[cur][0])}’(직접 만든 센서용) 모드로 설정되어 있어서, 무슨 센서인지 알 수 없고 원시 값(숫자)만 나와요. 위에서 보드에 꽂은 센서를 골라 주세요.${star}</p>`;
+  const sub = text
+    ? 'USB 연결은 보드가 숫자만 보내요. 고른 센서의 이름과 단위를 붙여 표시해요(보드 설정은 바뀌지 않아요).'
+    : 'EZ-nano 보드에 저장된 센서 종류예요. 바꾸면 보드 설정도 함께 바뀌어요(EZ·ON에서 바꾼 것과 같아요).';
+  return `<label class="field ez-sensor"><span>보드에 꽂은 센서 <small>${sub}</small></span>
     <select data-action="ezSensor" data-slot="${ui.slot}" ${driver.measuring ? 'disabled' : ''}>
-      ${opts.map(o => `<option value="${o.id}" ${o.id === d.sensorId ? 'selected' : ''}>${want.includes(o.id) ? '★ ' : ''}${esc(o.name)}</option>`).join('')}
+      ${opts.map(o => `<option value="${o.id}" ${o.id === cur ? 'selected' : ''}>${want.includes(o.id) ? '★ ' : ''}${esc(o.name)}</option>`).join('')}
     </select></label>${hint}`;
 }
 
@@ -1573,6 +1580,9 @@ async function connect(usb = false) {
   applySimExperiment(d);
   try {
     await d.connect();
+    // USB로 숫자만 받는 이지메이커 보드: 실험 설계의 센서로 이름·단위를 미리 붙여 둠(화면에서 바꿀 수 있음)
+    const want = typeof EZ_FOR_TYPE !== 'undefined' ? EZ_FOR_TYPE[state.design.sensor] : null;
+    if (usb && d instanceof EzNanoDriver && !d.proto && d.connected && want) await d.setSensor(want[0]).catch(() => {});
     toast(`센서 ${slot + 1}: ${d.deviceName} 연결 완료`);
   } catch (e) {
     if (e && e.name === 'NotFoundError') toast(usb ? 'USB 포트 선택이 취소되었습니다.' : '기기 선택이 취소되었습니다.');

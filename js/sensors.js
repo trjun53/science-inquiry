@@ -1233,20 +1233,53 @@ class EzNanoDriver extends GenericBleDriver {
     this.chars = [];
     this.emit('status', `${this.deviceName} 보드 확인 중…`);
     this.proto = true;
-    this._timeSync();
     let info = null;
-    try {
-      const r = await this._cmd(EZ_CMD.DEVICE_INFO, [], 1500);
-      if (r.data.length >= 11) info = r.data;
-    } catch (e) { /* 대답 없음 → 숫자 줄을 보내는 보드 */ }
+    // 포트를 열면 보드가 다시 시작되기도 해서, 몇 번에 걸쳐 EZ-nano 규격으로 물어봄
+    for (const wait of [1000, 1200, 1500]) {
+      this._timeSync();
+      try {
+        const r = await this._cmd(EZ_CMD.DEVICE_INFO, [], wait);
+        if (r.data.length >= 11) { info = r.data; break; }
+      } catch (e) { /* 대답 없음 */ }
+      if (!this.connected) return;
+    }
     if (!info) {
+      // 숫자 줄만 보내는 보드 → 센서 종류는 화면에서 골라 이름·단위를 붙임
       this.proto = false;
       this.textBuf = {};
-      this.applyDecoder(this.config.decoder);
+      this.config = { ...this.config, decoder: JSON.parse(JSON.stringify(this.config.decoder)) };
+      this._nameText(0);
       this.emit('status', `${this.deviceName} 연결됨 (보드가 보내는 숫자를 받습니다)`);
       return;
     }
     await this._useInfo(info);
+  }
+
+  // USB 숫자 줄 방식: 고른 센서 종류의 이름·단위를 채널에 붙임 (0 = 모름)
+  _nameText(id) {
+    const def = EZ_SENSORS[id] || null;
+    this.textSensorId = def ? id : 0;
+    const d = this.config.decoder;
+    const n = Math.max(1, (d.fields || []).length);
+    d.fields = Array.from({ length: n }, (_, i) => {
+      const c = def && def[1][i];
+      return { ...(d.fields[i] || {}), name: c ? c[0] : (i ? `값${i + 1}` : '측정값'), unit: c ? c[1] : '' };
+    });
+    this.applyDecoder(d);
+    this.deviceName = def ? `이지메이커 USB (${def[0]})` : '이지메이커 USB';
+  }
+
+  // 받은 값이 더 많으면 채널을 늘림 (고른 센서의 이름·단위를 이어서 씀)
+  _ensureChannels(n) {
+    if (n <= this.channels.length) return;
+    const def = !this.proto && EZ_SENSORS[this.textSensorId];
+    for (let i = this.channels.length; i < n; i++) {
+      const c = def && def[1][i];
+      const name = c ? c[0] : `값${i + 1}`, unit = c ? c[1] : '';
+      this.channels.push({ id: i, name, unit, enabled: true });
+      this.config.decoder.fields.push({ name, unit });
+    }
+    this.emit('channels', this.channels);
   }
 
   // 기기 정보(펌웨어, 센서 번호, 간격, 이름) → 센서 종류·채널
@@ -1288,8 +1321,13 @@ class EzNanoDriver extends GenericBleDriver {
   // 보드에 꽂은 센서 종류를 바꿈 (제조사 앱 EZ·ON의 센서 설정과 같은 명령, 보드에 저장됨)
   async setSensor(id) {
     id = Number(id);
-    if (!this.proto || !this.connected) throw new Error('센서 보드와 연결되어 있지 않습니다.');
     if (this.measuring) throw new Error('측정 중에는 센서 종류를 바꿀 수 없어요. 먼저 정지하세요.');
+    if (this.connected && this.usb && !this.proto) { // USB 숫자 줄: 이름·단위만 붙임(보드 설정은 그대로)
+      this._nameText(id);
+      this.emit('status', `${this.deviceName} 연결됨`);
+      return;
+    }
+    if (!this.proto || !this.connected) throw new Error('센서 보드와 연결되어 있지 않습니다.');
     if (!EZ_SENSORS[id] || id === this.sensorId) return;
     const raw = this.oldFw ? (id >= 21 && id <= 37 ? id - 1 : (EZ_OLD_RAW[id] || id)) : id;
     const ms = EZ_SENSORS[id][2] === 0 ? 0 : Math.max(500, EZ_SENSORS[id][2]);
