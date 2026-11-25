@@ -388,7 +388,8 @@ aside .side { position: static; }
 .bbadge { font-size: 10.5px; color: var(--ink2); background: #f1f5f9; border-radius: 99px; padding: 1px 7px; margin-top: 3px; }
 .tips { margin: 0 0 12px; padding-left: 20px; font-size: 13.5px; color: var(--ink2); }
 .tips li { margin: 3px 0; }
-.conn-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #f8fafc; border-radius: 12px; padding: 10px 12px; margin-bottom: 12px; }
+.conn-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #f8fafc; border-radius: 12px; padding: 10px 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.conn-btns { display: flex; gap: 8px; flex-wrap: wrap; }
 .status { font-weight: 600; color: var(--ink2); font-size: 14px; }
 .status.ok { color: var(--ok); }
 .channels { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }

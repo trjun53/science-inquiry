@@ -20,11 +20,13 @@ const BRANDS = [
   { key: 'sim', name: '가상 센서', sub: '센서 없이 연습', mark: '∿', color: '#64748b', badge: '시뮬레이션' },
   { key: 'csv', name: '파일 가져오기', sub: '센서 앱 CSV', mark: '⇪', color: '#475569', badge: 'CSV' },
 ];
+// USB 케이블 연결(Web Serial)도 지원하는 제조사
+const USB_BRANDS = ['sciencecube', 'easymaker'];
 const BRAND_TIPS = {
   vernier: ['센서의 전원 버튼을 눌러 빨간 LED가 깜빡이는지 확인하세요.', '목록에서 GDX-로 시작하는 이름(예: GDX-TMP 0F1…)을 선택합니다.', '센서 안에 여러 채널이 있으면 자동으로 표시되고, 연결되면 실시간 값이 바로 보입니다. Graphical Analysis 등 다른 앱에 연결되어 있으면 목록에 나타나지 않으니 먼저 끊으세요.'],
   pasco: ['센서 전원을 켜고 초록/파란 LED가 깜빡이는지 확인하세요.', '목록에서 센서 본체에 적힌 6자리 ID(예: 123-456)가 포함된 이름을 선택합니다.', '연결되면 센서 종류를 자동으로 알아내고 실시간 값이 바로 표시됩니다. SPARKvue 등 다른 앱이나 다른 컴퓨터에 연결되어 있으면 먼저 끊으세요.'],
-  sciencecube: ['센서 전원을 켜고 "모바일 모드"로 바꿔 주세요. (PC 모드에서는 블루투스 목록에 나타나지 않아요)', '목록에서 SC:TEMP, SC:PRESS처럼 SC:로 시작하는 이름을 선택합니다. 사이언스큐브 앱이나 태블릿·휴대폰에 연결되어 있으면 보이지 않으니 먼저 끊으세요.', '연결되면 센서 종류를 자동으로 알아내고 실시간 값이 바로 표시됩니다. "페어링이 필요하다"는 안내가 나오면 Windows 설정 > 블루투스에서 센서를 먼저 추가하세요.'],
-  easymaker: ['EZ-nano 보드의 전원을 켜고 센서가 보드에 꽂혀 있는지 확인하세요. EZ·ON 등 다른 앱·탭에 연결되어 있으면 먼저 끊으세요.', '목록에서 EZ로 시작하는 이름을 선택합니다. 보드에 설정된 센서 종류(온도, 온습도, 빛, 소리, 거리, 힘 등)를 자동으로 알아내고 실시간 값이 바로 표시됩니다.', '센서 종류를 바꾸려면 EZ·ON에서 보드의 센서를 바꾼 뒤 다시 연결하세요. 직접 만든 메이커 보드는 "23.5,45.1" 같은 텍스트를 보내면 범용 방식으로 받습니다.'],
+  sciencecube: ['블루투스: 센서를 "모바일 모드"로 켜고 [블루투스로 연결]을 누른 뒤, SC:TEMP·SC:PRESS처럼 SC:로 시작하는 이름을 선택합니다. 사이언스큐브 앱이나 태블릿·휴대폰에 연결되어 있으면 보이지 않으니 먼저 끊으세요.', 'USB: 센서를 "PC 모드"로 켜고 USB 케이블로 컴퓨터에 꽂은 뒤 [USB로 연결]을 누르고, 목록에서 센서의 포트(COM 번호)를 선택합니다. 블루투스 페어링 문제가 있을 때 쓰면 좋아요. 목록에 포트가 없으면 충전 전용 케이블이 아닌지 확인하세요.', '연결되면 센서 종류를 자동으로 알아내고 실시간 값이 바로 표시됩니다. 블루투스에서 "페어링이 필요하다"는 안내가 나오면 Windows 설정 > 블루투스에서 센서를 먼저 추가하거나 USB로 연결하세요.'],
+  easymaker: ['EZ-nano 센서: 보드 전원을 켜고 센서를 꽂은 뒤 [블루투스로 연결]을 누르고, EZ로 시작하는 이름을 선택합니다. 보드에 설정된 센서 종류(온도, 온습도, 빛, 소리, 거리, 힘 등)를 자동으로 알아냅니다. EZ·ON 등 다른 앱·탭에 연결되어 있으면 먼저 끊으세요.', 'USB: EZ·ON 블록 코딩에서 \'데이터 전송\' 블록으로 숫자를 보내는 보드는 USB 케이블로 꽂고 [USB로 연결]을 누른 뒤 포트(COM 번호)를 고릅니다. "23.5,45.1"처럼 쉼표로 나눈 숫자가 채널별로 측정됩니다(115200bps).', 'EZ-nano 센서 값은 제조사 앱(EZ·ON)과 같이 블루투스로 받는 것이 기본이에요. 센서 종류를 바꾸려면 EZ·ON에서 보드의 센서를 바꾼 뒤 다시 연결하세요.'],
   sim: ['실제 센서 없이 측정 흐름을 연습하는 가상 센서입니다.', '실험 설계에서 고른 측정 센서 종류에 맞는 그럴듯한 데이터가 만들어집니다.'],
   csv: ['SPARKvue, Graphical Analysis, 사이언스큐브 앱 등에서 내보낸 CSV 파일을 불러옵니다.', '첫 열(또는 "시간/Time" 열)을 시간으로, 나머지 열을 측정값으로 인식합니다.'],
 };
@@ -657,7 +659,7 @@ function brandPanel() {
     <div class="conn-row">
       ${connected
         ? `<span class="status ok" id="connStatus">● ${esc(cur.deviceName)} 연결됨</span><button class="btn small ghost" data-action="disconnect">연결 해제</button>`
-        : `<span class="status" id="connStatus">○ 연결 안 됨</span><button class="btn primary" data-action="connect">${ui.brand === 'sim' ? '가상 센서 켜기' : '블루투스로 연결'}</button>`}
+        : `<span class="status" id="connStatus">○ 연결 안 됨</span><span class="conn-btns"><button class="btn primary" data-action="connect">${ui.brand === 'sim' ? '가상 센서 켜기' : '블루투스로 연결'}</button>${USB_BRANDS.includes(ui.brand) ? '<button class="btn" data-action="connectUsb">USB로 연결</button>' : ''}</span>`}
     </div>
     <label class="field alias-field"><span>센서 ${ui.slot + 1} 이름 <small>(선택) 예: 뜨거운 물, 차가운 물 — 그래프와 표에 이 이름으로 표시돼요</small></span>
       <input data-alias="${ui.slot}" value="${esc(sensorAlias(ui.slot))}" maxlength="20" placeholder="센서 ${ui.slot + 1}" ${driver.measuring ? 'disabled' : ''}></label>
@@ -1536,7 +1538,7 @@ function applySimExperiment(d) {
   return false;
 }
 
-async function connect() {
+async function connect(usb = false) {
   if (driver.measuring) return toast('측정 중에는 센서를 새로 연결할 수 없어요. 먼저 정지하세요.', 'warn');
   const slot = ui.slot;
   const old = driver.slots[slot];
@@ -1545,10 +1547,11 @@ async function connect() {
   if (ui.brand === 'vernier') d = new VernierDriver();
   else if (ui.brand === 'sim') d = new SimulationDriver(state.design.sensor || recSensors()[0] || 'temp');
   else if (ui.brand === 'pasco') d = new PascoDriver(ui.cfg);
-  else if (ui.brand === 'sciencecube') d = new ScienceCubeDriver();
-  else if (ui.brand === 'easymaker') d = new EzNanoDriver(ui.cfg);
+  else if (ui.brand === 'sciencecube') d = new ScienceCubeDriver({ usb });
+  else if (ui.brand === 'easymaker') d = new EzNanoDriver(ui.cfg, { usb });
   else d = new GenericBleDriver(ui.brand, ui.cfg);
-  if (ui.brand !== 'sim' && !('bluetooth' in navigator)) return toast('이 브라우저는 블루투스를 지원하지 않습니다. Chrome 또는 Edge를 사용하세요.', 'warn');
+  if (usb && !('serial' in navigator)) return toast('이 브라우저는 USB 연결을 지원하지 않습니다. 컴퓨터의 Chrome 또는 Edge를 사용하세요.', 'warn');
+  if (!usb && ui.brand !== 'sim' && !('bluetooth' in navigator)) return toast('이 브라우저는 블루투스를 지원하지 않습니다. Chrome 또는 Edge를 사용하세요.', 'warn');
   ui.raw = [];
   driver.setSlot(slot, d);
   applySimExperiment(d);
@@ -1556,7 +1559,7 @@ async function connect() {
     await d.connect();
     toast(`센서 ${slot + 1}: ${d.deviceName} 연결 완료`);
   } catch (e) {
-    if (e && e.name === 'NotFoundError') toast('기기 선택이 취소되었습니다.');
+    if (e && e.name === 'NotFoundError') toast(usb ? 'USB 포트 선택이 취소되었습니다.' : '기기 선택이 취소되었습니다.');
     else toast('연결 실패: ' + (e.message || e), 'warn');
     if (d.connected) await d.disconnect();
   }
@@ -1825,6 +1828,7 @@ const actions = {
     updateLive();
   },
   connect: () => connect(),
+  connectUsb: () => connect(true),
   disconnect: async () => { const cur = sd(); if (cur) { cur.userClosed = true; await cur.disconnect(); } refreshBrandPanel(); updateMeasureButtons(); updateLive(); },
   axisApply: el => {
     const row = el.closest('.axis-row');

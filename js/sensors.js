@@ -1,8 +1,8 @@
 // 디지털 탐구 센서 블루투스(Web Bluetooth) 드라이버
 // - Vernier Go Direct : 공식 라이브러리 godirect-js 사용 → 채널 정보 자동 인식
 // - PASCO : 공식 Python 라이브러리(pasco)의 통신 방식·데이터시트를 옮겨 구현
-// - 사이언스큐브 : 제조사 웹 앱(Science#)과 같은 통신 방식(SC: 이름, Transparent UART, Base64 프레임)
-// - 이지메이커 : 제조사 웹 앱(EZ·ON)과 같은 통신 방식(EZ 이름, Nordic UART, C0…C1 프레임 + CRC8)
+// - 사이언스큐브 : 제조사 웹 앱(Science#)과 같은 통신 방식(SC: 이름, Transparent UART, Base64 프레임), USB 케이블 연결도 지원
+// - 이지메이커 : 제조사 웹 앱(EZ·ON)과 같은 통신 방식(EZ 이름, Nordic UART, C0…C1 프레임 + CRC8), USB는 숫자 줄(115200bps)
 // - 그 밖의 기기 : 범용 BLE 드라이버 (서비스 탐색 → 알림(notify) 구독 → 설정한 형식으로 데이터 해석)
 // - 시뮬레이션 : 센서 없이 수업 흐름을 연습할 수 있는 가상 센서
 
@@ -189,7 +189,7 @@ const BRAND_PRESETS = {
       fields: [{ name: '측정값', unit: '' }],
       startChar: '', startHex: '', stopChar: '', stopHex: '', pollChar: '', pollHex: '',
     },
-    note: '사이언스큐브 공식 웹 앱(Science#)과 같은 통신 방식으로 무선 센서 46종(온도, 전압, 전류, 압력, pH, 힘, 이산화 탄소, 산소, 빛, 습도, 소리, 심박 등)을 자동으로 알아봅니다. 압력은 kPa로 표시합니다. 아래 설정은 쓰이지 않으며, [원시 데이터]로 수신 상태만 확인할 수 있습니다.',
+    note: '사이언스큐브 공식 웹 앱(Science#)과 같은 통신 방식으로, 블루투스 또는 USB 케이블로 연결한 무선 센서 46종(온도, 전압, 전류, 압력, pH, 힘, 이산화 탄소, 산소, 빛, 습도, 소리, 심박 등)을 자동으로 알아봅니다. 압력은 kPa로 표시합니다. 아래 설정은 쓰이지 않으며, [원시 데이터]로 수신 상태만 확인할 수 있습니다.',
   },
   easymaker: {
     label: '이지메이커',
@@ -200,7 +200,7 @@ const BRAND_PRESETS = {
       fields: [{ name: '측정값', unit: '' }],
       startChar: '', startHex: '', stopChar: '', stopHex: '', pollChar: '', pollHex: '',
     },
-    note: '이지메이커 공식 웹 앱(EZ·ON)과 같은 통신 방식으로 EZ-nano 보드에 설정된 센서 종류를 자동으로 알아보고, 측정 시작·정지 명령을 보내 값을 받습니다. 아래 설정은 EZ-nano 규격으로 응답하지 않는 메이커 보드(텍스트 전송)나 [모든 블루투스 기기 표시]를 켰을 때만 쓰이며, [원시 데이터]로 수신 상태를 확인할 수 있습니다.',
+    note: '이지메이커 공식 웹 앱(EZ·ON)과 같은 통신 방식으로 EZ-nano 보드에 설정된 센서 종류를 자동으로 알아보고, 측정 시작·정지 명령을 보내 값을 받습니다. [USB로 연결]은 EZ·ON 블록 코딩의 데이터 전송 블록처럼 쉼표로 나눈 숫자 줄을 115200bps로 보내는 보드를 받습니다. 아래 설정은 숫자 줄을 보내는 보드나 [모든 블루투스 기기 표시]를 켰을 때만 쓰이며, [원시 데이터]로 수신 상태를 확인할 수 있습니다.',
   },
 };
 
@@ -666,6 +666,79 @@ function readField(v, f) {
   }
 }
 
+/* ───────────────────────── USB 연결 (Web Serial) ─────────────────────────
+   사이언스큐브·이지메이커 공식 웹 앱과 같이 USB 시리얼 포트를 115200bps로 열고,
+   받은 바이트는 블루투스 알림과 똑같이 드라이버에 넘김. 쓰기는 한 번에 하나씩 차례로 */
+class SerialLink {
+  constructor(onBytes, onClose) {
+    this.onBytes = onBytes;
+    this.onClose = onClose;
+    this.wq = Promise.resolve();
+  }
+
+  async open(baudRate = 115200) {
+    if (!('serial' in navigator)) throw new Error('이 브라우저는 USB 연결을 지원하지 않습니다. 컴퓨터의 Chrome 또는 Edge에서 열어 주세요.');
+    this.port = await navigator.serial.requestPort();
+    try {
+      await this.port.open({ baudRate, bufferSize: 4096 });
+    } catch (e) {
+      if (/already open/i.test(e.message || '')) throw new Error('이 USB 포트는 이미 열려 있습니다. 다른 탭이나 제조사 앱에서 연결을 끊은 뒤 다시 시도하세요.');
+      throw new Error(`USB 포트를 열지 못했습니다 (${e.message}). 다른 프로그램이 이 포트를 쓰고 있지 않은지 확인하고, 케이블을 뽑았다 다시 꽂아 보세요.`);
+    }
+    this._lost = e => { if (e.target === this.port) this._closed(); };
+    navigator.serial.addEventListener('disconnect', this._lost);
+    this.loop = this._loop();
+  }
+
+  async _loop() {
+    while (this.port && this.port.readable && !this.closing && !this.dead) {
+      let done = false;
+      this.reader = this.port.readable.getReader();
+      try {
+        for (;;) {
+          const r = await this.reader.read();
+          if (r.done) { done = true; break; }
+          if (r.value && r.value.length) this.onBytes(r.value);
+        }
+      } catch (e) {
+        if (!this.closing) console.warn('USB 읽기 오류', e); // 일시적인 오류면 다시 읽음
+      } finally {
+        try { this.reader.releaseLock(); } catch (x) { /* ignore */ }
+        this.reader = null;
+      }
+      if (done) break;
+    }
+    if (!this.closing) this._closed(); // 케이블이 빠지는 등 더는 읽을 수 없음
+  }
+
+  write(bytes) {
+    const job = async () => {
+      if (!this.port || !this.port.writable) throw new Error('USB 연결이 끊겼습니다');
+      const w = this.port.writable.getWriter();
+      try { await w.write(bytes); } finally { w.releaseLock(); }
+    };
+    const p = this.wq.then(job, job);
+    this.wq = p.catch(() => {});
+    return p;
+  }
+
+  _closed() {
+    if (this.dead) return;
+    this.dead = true;
+    try { navigator.serial.removeEventListener('disconnect', this._lost); } catch (x) { /* ignore */ }
+    if (this.onClose) this.onClose();
+  }
+
+  async close() {
+    this.closing = true;
+    try { if (this.reader) await this.reader.cancel(); } catch (x) { /* ignore */ }
+    try { await this.loop; } catch (x) { /* ignore */ }
+    try { await this.wq; } catch (x) { /* ignore */ }
+    try { if (this.port) await this.port.close(); } catch (x) { /* ignore */ }
+    this._closed();
+  }
+}
+
 /* ───────────────────────── 사이언스큐브 무선 센서 ─────────────────────────
    제조사 공식 웹 앱(Science#, on.sciencecube.com)과 같은 통신 방식
    - 기기 이름 "SC:TEMP", "SC:PRESS", "KDWEATHER", "SmartCart" … (센서를 '모바일 모드'로 켜야 보임)
@@ -719,7 +792,7 @@ const SC_SENSORS = {
   WL128T: { f: 'float', ch: [["탁도","NTU"]] }, // Turbidity (SC:TURB)
   WL129H: { f: 'float', ch: [["심박수","bpm"]] }, // Heart Rate (SC:HRS-)
   WL130D: { f: 'float', ch: [["물방울 수","방울"],["부피","mL"]] }, // Drop Counter (SC:DROP)
-  WL131J: { f: 'short', ch: [["전압","V"],["전류","A"],["전력","W"],["에너지","J"]] }, // Energy (SC:ENERGY)
+  WL131J: { f: 'short', ch: [["전압","V",0.001],["전류","A",0.001],["전력","W",0.001],["에너지","J",0.1]] }, // Energy (SC:ENERGY) — 제조사 앱과 같이 ÷1000, ÷10
   WL132W: { f: 'shortdiv10', ch: [["온도 A","°C"],["온도 B","°C"],["온도 C","°C"],["온도 D","°C"]] }, // Vertical Temperature (SC:VTEMP)
   WL133M: { f: 'shortdivmultico2wl133m', ch: [["온도","°C"],["습도","%"],["이산화 탄소 농도","ppm"]] }, // Multi-CO₂ (SC:MULTI)
   WL134A: { f: 'shortforwl143a', ch: [["온도","°C"],["압력","kPa",0.1]] }, // Pressure & Temperature (SC:ATMT)
@@ -755,14 +828,45 @@ function scDecode(p, f) {
 }
 
 class ScienceCubeDriver extends BaseDriver {
-  constructor() {
+  constructor(opts = {}) {
     super();
     this.brand = 'sciencecube';
+    this.usb = !!opts.usb; // true면 USB 케이블(PC 모드)로 연결
     this.rx = new Uint8Array(0);
     this.periodMs = 500;
   }
 
   async connect() {
+    if (this.usb) {
+      // 제조사 앱과 같이 USB 포트를 115200bps로 열고, 블루투스와 같은 명령·프레임을 주고받음
+      this.link = new SerialLink(b => this._onBytes(b, 'USB'), () => this._onDisconnected());
+      await this.link.open(115200);
+      this.deviceName = '사이언스큐브 USB';
+      this.emit('status', `${this.deviceName} 연결 중…`);
+    } else {
+      await this._openBle();
+    }
+    this.connected = true;
+    this.rx = new Uint8Array(0);
+
+    this.emit('status', '센서 종류 확인 중…');
+    let uid = null;
+    for (let n = 0; n < 3 && !uid; n++) uid = await this._askName();
+    if (this.usb && !uid) {
+      await this.link.close();
+      throw new Error('USB 포트는 열렸지만 사이언스큐브 센서가 대답하지 않습니다. 센서 전원이 PC 모드로 켜져 있는지, 목록에서 센서의 포트를 골랐는지 확인하세요.');
+    }
+    this.uid = (uid || '').toUpperCase();
+    this.def = SC_SENSORS[this.uid.slice(0, 6)] || null;
+    const ch = this.def ? this.def.ch : [['측정값', '']];
+    this.channels = ch.map(([name, unit, k], i) => ({ id: i, name, unit, k: k || 1, enabled: i === 0 || ch.length <= 3 }));
+    if (this.uid) this.deviceName = `${this.deviceName} (${this.uid.slice(0, 6)})`;
+    this.emit('channels', this.channels);
+    this.emit('status', this.def ? `${this.deviceName} 연결됨` : `${this.deviceName} 연결됨 (센서 종류를 알 수 없음)`);
+    await this._measure(500); // 연결되면 바로 실시간 값을 보여 줌
+  }
+
+  async _openBle() {
     this.device = await navigator.bluetooth.requestDevice({
       filters: [{ namePrefix: 'SC:' }, { namePrefix: 'Smart' }, { namePrefix: 'KD' }],
       optionalServices: [SC_SERVICE],
@@ -783,10 +887,9 @@ class ScienceCubeDriver extends BaseDriver {
         this.readChar = await svc.getCharacteristic(SC_NOTIFY);
         this.writeChar = await svc.getCharacteristic(SC_WRITE);
         step = '데이터 받기(알림) 켜기';
-        if (!this.listening) {
-          this.readChar.addEventListener('characteristicvaluechanged', e => this._onNotify(e.target.value));
-          this.listening = true;
-        }
+        // 같은 함수로 등록 → 다시 시도해도 중복 등록되지 않음
+        this._notifyFn = this._notifyFn || (e => this._onNotify(e.target.value));
+        this.readChar.addEventListener('characteristicvaluechanged', this._notifyFn);
         await this.readChar.startNotifications();
         lastErr = null;
         break;
@@ -795,8 +898,8 @@ class ScienceCubeDriver extends BaseDriver {
         console.warn(`사이언스큐브 ${step} 실패 (${n + 1}회)`, e);
         if (/Authentication|Insufficient/i.test(e.message || '')) break;
         this.emit('status', `${step} 다시 시도 중… (${n + 2}/4)`);
+        try { if (this.readChar && this._notifyFn) this.readChar.removeEventListener('characteristicvaluechanged', this._notifyFn); } catch (x) { /* ignore */ }
         try { if (this.device.gatt.connected) this.device.gatt.disconnect(); } catch (x) { /* ignore */ }
-        this.listening = false;
         await sleep(500 * (n + 1));
       }
     }
@@ -804,31 +907,20 @@ class ScienceCubeDriver extends BaseDriver {
       try { if (this.device.gatt.connected) this.device.gatt.disconnect(); } catch (x) { /* ignore */ }
       if (/Authentication|Insufficient/i.test(lastErr.message || '')) {
         throw new Error('이 센서는 Windows에서 먼저 페어링해야 합니다. 설정 > 블루투스 및 장치 > 장치 추가 > 블루투스에서 '
-          + `${this.deviceName}을(를) 선택해 페어링한 뒤, 이 화면에서 다시 [블루투스로 연결]을 누르세요.`);
+          + `${this.deviceName}을(를) 선택해 페어링한 뒤, 이 화면에서 다시 [블루투스로 연결]을 누르세요. `
+          + '또는 센서를 PC 모드로 켜고 USB 케이블로 꽂은 뒤 [USB로 연결]을 누르면 페어링 없이 쓸 수 있습니다.');
       }
       if (/disconnected/i.test(lastErr.message || '')) {
         throw new Error('센서가 연결되자마자 연결을 끊었습니다. Windows와 센서의 페어링 정보가 맞지 않을 때 주로 생깁니다. '
           + 'Windows 설정 > 블루투스 및 장치에서 이 센서를 [장치 제거]하고, 센서를 껐다 켠 뒤(모바일 모드) 다시 연결해 보세요. '
-          + '그래도 안 되면 그때 Windows에서 새로 페어링한 뒤 연결하세요.');
+          + '그래도 안 되면 Windows에서 새로 페어링하거나, USB 케이블로 꽂고 [USB로 연결]을 이용하세요.');
       }
       const pair = /GATT operation failed/i.test(lastErr.message || '');
       throw new Error(`${step} 단계에서 실패했습니다 (${lastErr.message}). `
         + (pair ? '센서를 껐다 켠 뒤 다시 연결해 보고, 계속 안 되면 Windows 설정 > 블루투스 및 장치 > 장치 추가에서 센서를 먼저 페어링한 뒤 연결하세요.'
-                : '센서를 껐다 켜고 PC 가까이에서 다시 연결하세요. 다른 앱·태블릿에 연결되어 있으면 먼저 끊으세요.'));
+                : '센서를 껐다 켜고 PC 가까이에서 다시 연결하세요. 다른 앱·태블릿에 연결되어 있으면 먼저 끊으세요.')
+        + ' 블루투스가 계속 안 되면 센서를 PC 모드로 켜고 USB 케이블로 꽂은 뒤 [USB로 연결]을 이용하세요.');
     }
-    this.connected = true;
-
-    this.emit('status', '센서 종류 확인 중…');
-    let uid = null;
-    for (let n = 0; n < 3 && !uid; n++) uid = await this._askName();
-    this.uid = (uid || '').toUpperCase();
-    this.def = SC_SENSORS[this.uid.slice(0, 6)] || null;
-    const ch = this.def ? this.def.ch : [['측정값', '']];
-    this.channels = ch.map(([name, unit, k], i) => ({ id: i, name, unit, k: k || 1, enabled: i === 0 || ch.length <= 3 }));
-    if (this.uid) this.deviceName = `${this.deviceName} (${this.uid.slice(0, 6)})`;
-    this.emit('channels', this.channels);
-    this.emit('status', this.def ? `${this.deviceName} 연결됨` : `${this.deviceName} 연결됨 (센서 종류를 알 수 없음)`);
-    await this._measure(500); // 연결되면 바로 실시간 값을 보여 줌
   }
 
   _askName() {
@@ -839,25 +931,44 @@ class ScienceCubeDriver extends BaseDriver {
     });
   }
 
-  // 쓰기: 응답 있는 쓰기와 응답 없는 쓰기 중 되는 쪽을 기억해 사용. 실패해도 연결은 유지(제조사 앱과 같음)
-  async _send(cmd, params) {
-    if (!this.writeChar) return false;
+  // 쓰기는 한 번에 하나씩 차례로 보냄. Windows에서는 쓰기 확인이 늦게 오는 일이 많아,
+  // 앞 쓰기가 끝나기 전에 다음 명령을 쓰면 "GATT operation already in progress"로 명령이 사라짐
+  _send(cmd, params) {
+    if (!this.writeChar && !this.link) return Promise.resolve(false);
     const data = scFrame(cmd, params);
+    const job = () => this._write(data);
+    this.wq = (this.wq || Promise.resolve()).then(job, job);
+    return this.wq;
+  }
+
+  // 응답 있는 쓰기와 응답 없는 쓰기 중 되는 쪽을 기억해 사용. 실패해도 연결은 유지(제조사 앱과 같음)
+  async _write(data) {
+    if (this.link) {
+      try { await this.link.write(data); return true; } catch (e) { console.warn('사이언스큐브 USB 쓰기 실패', e); return false; }
+    }
+    if (!this.writeChar) return false;
     const pr = this.writeChar.properties || {};
     const modes = this.writeMode ? [this.writeMode] : [pr.write !== false ? 'with' : null, pr.writeWithoutResponse ? 'without' : null].filter(Boolean);
     if (!modes.length) modes.push('with');
     for (const m of modes) {
-      try {
-        const w = m === 'without' ? this.writeChar.writeValueWithoutResponse(data) : this.writeChar.writeValue(data);
-        // 응답을 오래 기다리지 않음(0.3초). 그 사이 오류가 나면 다른 방식으로 다시 씀
-        await Promise.race([w, sleep(300)]);
-        this.writeMode = m;
-        return true;
-      } catch (e) {
-        console.warn('사이언스큐브 쓰기 실패', m, e);
-        if (this.writeMode) { this.writeMode = null; return this._send(cmd, params); }
+      for (let tries = 0; tries < 3; tries++) {
+        try {
+          const w = m === 'without' ? this.writeChar.writeValueWithoutResponse(data) : this.writeChar.writeValue(data);
+          w.catch(() => {}); // 늦게 실패해도 오류 메시지가 쌓이지 않게
+          // 쓰기가 끝날 때까지 기다림(최대 2초). 확인이 늦게 와도 명령은 보낸 것으로 봄
+          await Promise.race([w, sleep(2000)]);
+          this.writeMode = m;
+          return true;
+        } catch (e) {
+          const msg = e && e.message || '';
+          if (/in progress/i.test(msg)) { await sleep(150); continue; } // 앞 작업이 아직 끝나지 않음 → 같은 방식으로 다시
+          console.warn('사이언스큐브 쓰기 실패', m, e);
+          if (!this.connected && !this.device.gatt.connected) return false;
+          break; // 다른 쓰기 방식으로 시도
+        }
       }
     }
+    if (this.writeMode) { this.writeMode = null; } // 다음에는 두 방식을 다시 시험
     return false;
   }
 
@@ -868,8 +979,11 @@ class ScienceCubeDriver extends BaseDriver {
   }
 
   _onNotify(dv) {
-    const chunk = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength).slice();
-    this.emit('raw', { uuid: SC_NOTIFY, bytes: chunk });
+    this._onBytes(new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength).slice(), SC_NOTIFY);
+  }
+
+  _onBytes(chunk, uuid) {
+    this.emit('raw', { uuid, bytes: chunk });
     let b = new Uint8Array(this.rx.length + chunk.length);
     b.set(this.rx); b.set(chunk, this.rx.length);
     // "{{" 로 시작하고 "}}" 로 끝나는 20바이트 단위로 잘라 읽음
@@ -925,8 +1039,10 @@ class ScienceCubeDriver extends BaseDriver {
   }
 
   async disconnect() {
+    this.userClosed = true;
     this.measuring = false;
     try { if (this.connected) await this._send(77, [0, 0]); } catch (e) { /* ignore */ }
+    if (this.link) await this.link.close();
     await super.disconnect();
   }
 }
@@ -1025,8 +1141,9 @@ const u32le = v => [v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 
 
 // EZ-nano 전용. 응답이 없는(직접 만든 메이커 보드) 기기는 범용 텍스트 방식으로 받음
 class EzNanoDriver extends GenericBleDriver {
-  constructor(config) {
+  constructor(config, opts = {}) {
     super('easymaker', config);
+    this.usb = !!opts.usb; // true면 USB 케이블로 연결
     this.proto = false;    // EZ-nano 통신 규격으로 대화가 되면 true
     this.waiters = {};
     this.frame = null;     // 받는 중인 프레임(이스케이프된 상태)
@@ -1035,6 +1152,7 @@ class EzNanoDriver extends GenericBleDriver {
   }
 
   async connect() {
+    if (this.usb) return this._connectUsb();
     if (this.config.showAll) return super.connect(); // [모든 블루투스 기기 표시] = 범용 방식
     this.device = await navigator.bluetooth.requestDevice({
       filters: [{ namePrefix: 'EZ' }, { namePrefix: 'ez' }, { services: [EZ_SERVICE] }],
@@ -1054,10 +1172,9 @@ class EzNanoDriver extends GenericBleDriver {
         this.txChar = await svc.getCharacteristic(EZ_NOTIFY);
         this.rxChar = await svc.getCharacteristic(EZ_WRITE);
         step = '데이터 받기(알림) 켜기';
-        if (!this.listening) {
-          this.txChar.addEventListener('characteristicvaluechanged', e => this._onNotify(EZ_NOTIFY, e.target.value));
-          this.listening = true;
-        }
+        // 같은 함수로 등록 → 다시 시도할 때 새 통로에도 붙고, 같은 통로에는 중복되지 않음
+        this._notifyFn = this._notifyFn || (e => this._onNotify(EZ_NOTIFY, e.target.value));
+        this.txChar.addEventListener('characteristicvaluechanged', this._notifyFn);
         await this.txChar.startNotifications();
         lastErr = null;
         break;
@@ -1065,6 +1182,7 @@ class EzNanoDriver extends GenericBleDriver {
         lastErr = e;
         console.warn(`EZ-nano ${step} 실패 (${n + 1}회)`, e);
         this.emit('status', `${step} 다시 시도 중… (${n + 2}/3)`);
+        try { if (this.txChar && this._notifyFn) this.txChar.removeEventListener('characteristicvaluechanged', this._notifyFn); } catch (x) { /* ignore */ }
         try { if (this.device.gatt.connected) this.device.gatt.disconnect(); } catch (x) { /* ignore */ }
         await sleep(500 * (n + 1));
       }
@@ -1096,6 +1214,37 @@ class EzNanoDriver extends GenericBleDriver {
       this.emit('status', `${this.deviceName} 연결됨 (EZ-nano 응답이 없어 범용 텍스트 방식 사용)`);
       return;
     }
+    await this._useInfo(info);
+  }
+
+  // USB: EZ·ON의 블록 코딩 보드처럼 115200bps로 "23.5,45.1" 같은 숫자 줄을 받음.
+  // 먼저 EZ-nano 통신 규격으로 대답하는지 확인하고, 대답하면 블루투스와 같은 방식으로 측정
+  async _connectUsb() {
+    this.link = new SerialLink(b => this._onNotify('USB', new DataView(b.buffer, b.byteOffset, b.byteLength)), () => this._onDisconnected());
+    await this.link.open(115200);
+    this.deviceName = '이지메이커 USB';
+    this.connected = true;
+    this.chars = [];
+    this.emit('status', `${this.deviceName} 보드 확인 중…`);
+    this.proto = true;
+    this._timeSync();
+    let info = null;
+    try {
+      const r = await this._cmd(EZ_CMD.DEVICE_INFO, [], 1500);
+      if (r.data.length >= 11) info = r.data;
+    } catch (e) { /* 대답 없음 → 숫자 줄을 보내는 보드 */ }
+    if (!info) {
+      this.proto = false;
+      this.textBuf = {};
+      this.applyDecoder(this.config.decoder);
+      this.emit('status', `${this.deviceName} 연결됨 (보드가 보내는 숫자를 받습니다)`);
+      return;
+    }
+    await this._useInfo(info);
+  }
+
+  // 기기 정보(펌웨어, 센서 번호, 간격, 이름) → 센서 종류·채널
+  async _useInfo(info) {
     const fw = [info[3], info[4], info[5]];
     this.fw = fw.join('.');
     const old = fw[0] * 10000 + fw[1] * 100 + fw[2] < 10106;
@@ -1131,6 +1280,7 @@ class EzNanoDriver extends GenericBleDriver {
 
   // 쓰기는 한 번에 하나씩 (동시에 쓰면 블루투스 오류가 남)
   _tx(bytes) {
+    if (this.link) return this.link.write(bytes);
     const run = async () => {
       const c = this.rxChar, p = c.properties || {};
       if (p.writeWithoutResponse) {
@@ -1285,10 +1435,19 @@ class EzNanoDriver extends GenericBleDriver {
     super._onDisconnected();
   }
 
+  // 범용 텍스트 방식에서 [데이터 해석 설정]의 시작·정지 명령을 USB로 보낼 때
+  async _write(uuid, hex) {
+    if (!this.link) return super._write(uuid, hex);
+    const b = parseHex(hex);
+    if (b.length) await this.link.write(b);
+  }
+
   async disconnect() {
+    this.userClosed = true;
     this.closing = true;
     this.measuring = false;
     if (this.proto && this.connected) await this._cmd(EZ_CMD.STOP, [], 500).catch(() => {});
+    if (this.link) await this.link.close();
     await super.disconnect();
   }
 }
