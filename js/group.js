@@ -175,7 +175,9 @@ async function groupLeave(quiet) {
 function groupOnMessage(m) {
   if (m.t === 'init') return groupOnInit(m);
   if (m.t === 'ack') { group.pending = group.pending.filter(x => x.seq > m.seq); return; }
-  if (m.t === 'members') { group.members = m.list || []; renderGroupBar(); renderGroupBox(); groupShowEditors(); return; }
+  // 접속·입력 중 알림은 자주 오므로, 버튼이 있는 칸은 다시 그리지 않고 글자만 바꿈
+  // (누르는 사이에 버튼이 새로 그려지면 클릭이 무시되어 '모둠 나가기'가 안 눌리는 것처럼 보임)
+  if (m.t === 'members') { group.members = m.list || []; renderGroupBar(); updateGroupMemberCount(); groupShowEditors(); return; }
   if (m.t === 'error') { toast(m.error, 'warn'); return; }
   if (m.t === 'ops') groupApplyRemote(m.ops || [], m.nick);
 }
@@ -293,12 +295,18 @@ function groupRefreshRuns(streamingId, nick) {
 function groupRefresh(force) {
   const a = document.activeElement;
   if (!force && a && a.closest && a.closest('#view') && a.matches('input, textarea, select')) { group.deferred = true; return; }
+  // 버튼을 누르고 있는 중에 다시 그리면 그 클릭이 사라지므로, 손을 뗄 때까지 미룸
+  if (!force && group.pressing) { group.deferred = true; return; }
   group.deferred = false;
   const y = window.scrollY;
   render();
   window.scrollTo({ top: y });
 }
 document.addEventListener('focusout', () => { setTimeout(() => { if (group.deferred) groupRefresh(false); }, 0); });
+document.addEventListener('pointerdown', () => { group.pressing = true; }, true);
+const groupRelease = () => { group.pressing = false; setTimeout(() => { if (group.deferred) groupRefresh(false); }, 50); };
+document.addEventListener('pointerup', groupRelease, true);
+document.addEventListener('pointercancel', groupRelease, true);
 
 // 누가 어느 칸을 쓰고 있는지 알리기
 document.addEventListener('focusin', e => {
@@ -370,7 +378,7 @@ function groupBoxHtml() {
     <div class="group-box joined">
       <div class="g-big">${esc(g.code)}</div>
       <p>${g.role === 'leader' ? '친구들에게 이 <b>모둠 코드</b>를 알려 주세요. 친구들은 첫 화면의 [모둠 탐구]에서 코드를 넣으면 함께 쓸 수 있어요.' : '모둠에 참여했어요. 모둠원과 같은 보고서를 함께 쓰고 있어요.'}</p>
-      <p class="muted small">지금 접속한 모둠원: ${group.members.length ? `${group.members.length}명(나 포함)` : '연결 중…'} · 아래에서 수업(학교급~차시)을 고르면 모둠원 화면에도 똑같이 바뀌어요.</p>
+      <p class="muted small">지금 접속한 모둠원: <span id="groupMemberCount">${groupMemberCountText()}</span> · 아래에서 수업(학교급~차시)을 고르면 모둠원 화면에도 똑같이 바뀌어요.</p>
       <button class="btn small ghost" data-action="groupLeave">모둠 나가기</button>
     </div>`;
   }
@@ -385,6 +393,11 @@ function groupBoxHtml() {
       </div>
       <p class="muted small">모둠을 만든 뒤 아래에서 수업(학교급~차시)을 고르면 모둠원 화면에도 함께 바뀌어요. 참여하는 친구는 수업을 고르지 않아도 돼요.</p>
     </div>`;
+}
+const groupMemberCountText = () => (group.members.length ? `${group.members.length}명(나 포함)` : '연결 중…');
+function updateGroupMemberCount() {
+  const el = $('#groupMemberCount');
+  if (el) el.textContent = groupMemberCountText();
 }
 function renderGroupBox() {
   const box = $('#groupBox');

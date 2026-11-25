@@ -2,8 +2,8 @@
 // - Vernier Go Direct : 공식 라이브러리 godirect-js 사용 → 채널 정보 자동 인식
 // - PASCO : 공식 Python 라이브러리(pasco)의 통신 방식·데이터시트를 옮겨 구현
 // - 사이언스큐브 : 제조사 웹 앱(Science#)과 같은 통신 방식(SC: 이름, Transparent UART, Base64 프레임)
-// - 이지메이커 : 범용 BLE 드라이버 + 기본값
-//   (서비스 탐색 → 알림(notify) 구독 → 설정한 형식으로 데이터 해석)
+// - 이지메이커 : 제조사 웹 앱(EZ·ON)과 같은 통신 방식(EZ 이름, Nordic UART, C0…C1 프레임 + CRC8)
+// - 그 밖의 기기 : 범용 BLE 드라이버 (서비스 탐색 → 알림(notify) 구독 → 설정한 형식으로 데이터 해석)
 // - 시뮬레이션 : 센서 없이 수업 흐름을 연습할 수 있는 가상 센서
 
 const toHex = bytes => Array.from(bytes, b => b.toString(16).padStart(2, '0')).join(' ');
@@ -200,7 +200,7 @@ const BRAND_PRESETS = {
       fields: [{ name: '측정값', unit: '' }],
       startChar: '', startHex: '', stopChar: '', stopHex: '', pollChar: '', pollHex: '',
     },
-    note: '공개된 통신 규격이 없어 범용 방식으로 연결합니다. 메이커 보드(아두이노·ESP32·micro:bit)의 BLE 시리얼로 "값1,값2" 형태의 텍스트를 보내면 채널별로 측정됩니다.',
+    note: '이지메이커 공식 웹 앱(EZ·ON)과 같은 통신 방식으로 EZ-nano 보드에 설정된 센서 종류를 자동으로 알아보고, 측정 시작·정지 명령을 보내 값을 받습니다. 아래 설정은 EZ-nano 규격으로 응답하지 않는 메이커 보드(텍스트 전송)나 [모든 블루투스 기기 표시]를 켰을 때만 쓰이며, [원시 데이터]로 수신 상태를 확인할 수 있습니다.',
   },
 };
 
@@ -927,6 +927,368 @@ class ScienceCubeDriver extends BaseDriver {
   async disconnect() {
     this.measuring = false;
     try { if (this.connected) await this._send(77, [0, 0]); } catch (e) { /* ignore */ }
+    await super.disconnect();
+  }
+}
+
+/* ───────────────────────── 이지메이커 EZ-nano ─────────────────────────
+   제조사 공식 웹 앱(EZ·ON, ezon.ai)과 같은 통신 방식
+   - 기기 이름 "EZ…", Nordic UART 서비스(6e400001-…), 쓰기 6e400002, 알림 6e400003
+   - 프레임: C0 + 이스케이프([11, 명령, 길이(2바이트 LE), 내용…, CRC8]) + C1
+     · CRC8: 다항식 0x31, 초깃값 0, 앞쪽 비트부터 / 이스케이프: C0→DB DC, C1→DB DD, DB→DB DE
+     · 응답은 명령|0x80, [11, 명령, 결과, 길이, 내용…, CRC]
+   - 연결 후 시간 맞춤(3) → 기기 정보(11)로 보드에 설정된 센서 종류 확인
+   - 센서·간격 설정(2: [센서 ID, 간격ms 4바이트]) → 측정 시작(4) / 정지(5)
+   - 측정값(8)·묶음 측정값(9): float32 LE, 이미 실제 단위로 계산된 값 + 센서 시계(ms) */
+const EZ_SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+const EZ_WRITE = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
+const EZ_NOTIFY = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
+const EZ_CMD = { SET_SENSOR: 2, TIME_SYNC: 3, START: 4, STOP: 5, DEVICE_INFO: 11 };
+const EZ_RESP = new Set([129, 130, 131, 132, 133, 136, 138, 139, 140, 141, 143]);
+const EZ_ERR = {
+  1: '센서 보드 오류', 2: '지원하지 않는 명령', 3: '명령 길이 오류', 4: '센서 번호 오류', 5: '통신 오류(CRC)',
+  6: '통신 규격이 맞지 않음 — EZ·ON에서 펌웨어를 최신으로 올려 주세요', 7: '센서 보드가 다른 작업 중', 8: '보드에 센서가 꽂혀 있지 않음',
+  9: '보드 메모리 가득 참', 10: '설정값 오류(측정 간격이 너무 짧을 수 있음)',
+};
+// 센서 ID → [이름, 채널 [[이름, 단위]…], 최소 간격 ms]  (간격 0 = 누를 때만 값이 오는 센서)
+const EZ_SENSORS = {
+  1: ['DIY-A 아날로그', [['측정값', '']], 10],
+  2: ['DIY-A 전압', [['전압', 'V']], 10],
+  3: ['DIY-B 디지털', [['신호(0/1)', '']], 10],
+  4: ['DIY-B 아날로그', [['측정값', '']], 10],
+  5: ['pH', [['pH', 'pH']], 100],
+  6: ['일산화 탄소', [['일산화 탄소', '']], 100],
+  7: ['수소', [['수소', '']], 100],
+  8: ['LPG', [['LPG', '']], 100],
+  9: ['연기', [['연기', '']], 100],
+  10: ['프로페인', [['프로페인', '']], 100],
+  11: ['고온 온도', [['온도', '°C']], 200],
+  12: ['기압(아날로그)', [['기압', '']], 100],
+  13: ['고도', [['고도', 'm']], 100],
+  14: ['기압', [['기압', 'hPa']], 100],
+  15: ['온도(기압 센서)', [['온도', '°C']], 100],
+  16: ['무게', [['무게', 'g']], 200],
+  17: ['미세먼지 PM10', [['미세먼지(PM10)', 'µg/m³']], 5000],
+  18: ['초미세먼지 PM2.5', [['초미세먼지(PM2.5)', 'µg/m³']], 5000],
+  19: ['극초미세먼지 PM1.0', [['극초미세먼지(PM1.0)', 'µg/m³']], 5000],
+  20: ['미세먼지', [['미세먼지(PM10)', 'µg/m³'], ['초미세먼지(PM2.5)', 'µg/m³'], ['극초미세먼지(PM1.0)', 'µg/m³']], 5000],
+  21: ['빛', [['빛의 세기', '']], 10],
+  22: ['소리', [['소리 크기', '']], 10],
+  23: ['수온', [['온도', '°C']], 1000],
+  24: ['온습도', [['온도', '°C'], ['습도', '%']], 1000],
+  25: ['이산화 탄소', [['이산화 탄소 농도', 'ppm']], 1000],
+  26: ['자기장', [['자기장 세기', ''], ['극(N/S)', '']], 10],
+  27: ['가속도', [['가속도 X축', 'm/s²'], ['가속도 Y축', 'm/s²'], ['가속도 Z축', 'm/s²']], 10],
+  28: ['각속도', [['각속도 X축', 'rad/s'], ['각속도 Y축', 'rad/s'], ['각속도 Z축', 'rad/s']], 10],
+  29: ['지자기', [['지자기 X축', ''], ['지자기 Y축', ''], ['지자기 Z축', '']], 10],
+  30: ['기울기', [['좌우 기울기', '°'], ['앞뒤 기울기', '°']], 10],
+  31: ['전체 가속도', [['전체 가속도', 'G']], 10],
+  32: ['방위', [['방위각', '°']], 10],
+  33: ['전류', [['전류', 'mA']], 10],
+  34: ['전력', [['전력', 'mW']], 10],
+  35: ['전압(전력 센서)', [['전압', 'V']], 10],
+  36: ['전압', [['전압', 'V']], 10],
+  37: ['거리(초음파)', [['거리', 'cm']], 50],
+  38: ['힘', [['힘', 'N']], 10],
+  39: ['힘(반대 방향)', [['힘', 'N']], 10],
+  40: ['힘·질량', [['힘', 'N'], ['질량', 'g'], ['Y축 가속도', 'g']], 10],
+  101: ['버튼', [['버튼', '']], 0],
+  102: ['터치', [['터치', '']], 0],
+  103: ['움직임 감지', [['움직임', '']], 0],
+};
+// 펌웨어 1.1.6보다 옛 버전은 센서 ID 번호가 달라서 바꿔 읽음
+const EZ_OLD_ID = { 37: 101, 38: 102, 39: 103, 40: 20, 41: 40 };
+
+function ezCrc(bytes) {
+  let t = 0;
+  for (const b of bytes) {
+    t ^= b;
+    for (let i = 0; i < 8; i++) t = t & 0x80 ? ((t << 1) ^ 0x31) & 0xff : (t << 1) & 0xff;
+  }
+  return t;
+}
+function ezFrame(cmd, payload = []) {
+  const n = payload.length;
+  const body = [0x11, cmd, n & 0xff, (n >> 8) & 0xff, ...payload];
+  body.push(ezCrc(body));
+  const out = [0xc0];
+  body.forEach(x => {
+    if (x === 0xc0) out.push(0xdb, 0xdc);
+    else if (x === 0xc1) out.push(0xdb, 0xdd);
+    else if (x === 0xdb) out.push(0xdb, 0xde);
+    else out.push(x);
+  });
+  out.push(0xc1);
+  return new Uint8Array(out);
+}
+const u32le = v => [v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff];
+
+// EZ-nano 전용. 응답이 없는(직접 만든 메이커 보드) 기기는 범용 텍스트 방식으로 받음
+class EzNanoDriver extends GenericBleDriver {
+  constructor(config) {
+    super('easymaker', config);
+    this.proto = false;    // EZ-nano 통신 규격으로 대화가 되면 true
+    this.waiters = {};
+    this.frame = null;     // 받는 중인 프레임(이스케이프된 상태)
+    this.def = null;
+    this.periodMs = 500;
+  }
+
+  async connect() {
+    if (this.config.showAll) return super.connect(); // [모든 블루투스 기기 표시] = 범용 방식
+    this.device = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: 'EZ' }, { namePrefix: 'ez' }, { services: [EZ_SERVICE] }],
+      optionalServices: [EZ_SERVICE],
+    });
+    this.deviceName = this.device.name || 'EZ-nano';
+    this.device.addEventListener('gattserverdisconnected', () => this._onDisconnected());
+    this.emit('status', `${this.deviceName} 연결 중…`);
+    let lastErr = null, step = '';
+    for (let n = 0; n < 3; n++) {
+      try {
+        step = '블루투스 연결';
+        const server = await this.device.gatt.connect();
+        step = '서비스 찾기';
+        const svc = await server.getPrimaryService(EZ_SERVICE);
+        step = '통신 통로 찾기';
+        this.txChar = await svc.getCharacteristic(EZ_NOTIFY);
+        this.rxChar = await svc.getCharacteristic(EZ_WRITE);
+        step = '데이터 받기(알림) 켜기';
+        if (!this.listening) {
+          this.txChar.addEventListener('characteristicvaluechanged', e => this._onNotify(EZ_NOTIFY, e.target.value));
+          this.listening = true;
+        }
+        await this.txChar.startNotifications();
+        lastErr = null;
+        break;
+      } catch (e) {
+        lastErr = e;
+        console.warn(`EZ-nano ${step} 실패 (${n + 1}회)`, e);
+        this.emit('status', `${step} 다시 시도 중… (${n + 2}/3)`);
+        try { if (this.device.gatt.connected) this.device.gatt.disconnect(); } catch (x) { /* ignore */ }
+        await sleep(500 * (n + 1));
+      }
+    }
+    if (lastErr) {
+      throw new Error(`${step} 단계에서 실패했습니다 (${lastErr.message}). 센서 보드를 껐다 켜고, EZ·ON 등 다른 앱·탭에 연결되어 있으면 먼저 끊은 뒤 다시 연결하세요.`);
+    }
+    this.connected = true;
+    // 범용 방식으로 넘어갈 때를 위해 통로 정보도 남겨 둠
+    this.chars = [
+      { service: EZ_SERVICE, uuid: EZ_NOTIFY, ch: this.txChar, notify: true, write: false, read: false },
+      { service: EZ_SERVICE, uuid: EZ_WRITE, ch: this.rxChar, notify: false, write: true, read: false },
+    ];
+
+    this.emit('status', '센서 종류 확인 중…');
+    this.proto = true;
+    this._timeSync();
+    let info = null;
+    for (let n = 0; n < 2 && !info; n++) {
+      try {
+        const r = await this._cmd(EZ_CMD.DEVICE_INFO, [], 3000);
+        if (r.data.length >= 11) info = r.data;
+      } catch (e) { console.warn('EZ-nano 기기 정보', e); }
+    }
+    if (!info) {
+      // EZ-nano 규격으로 대답하지 않음 → 텍스트를 보내는 메이커 보드로 보고 범용 방식 사용
+      this.proto = false;
+      this.applyDecoder(this.config.decoder);
+      this.emit('status', `${this.deviceName} 연결됨 (EZ-nano 응답이 없어 범용 텍스트 방식 사용)`);
+      return;
+    }
+    const fw = [info[3], info[4], info[5]];
+    this.fw = fw.join('.');
+    const old = fw[0] * 10000 + fw[1] * 100 + fw[2] < 10106;
+    this.rawId = info[6]; // 보드에 설정된 센서 번호(설정 명령에는 이 번호를 그대로 씀)
+    let id = this.rawId;
+    if (old) id = id >= 20 && id <= 36 ? id + 1 : (EZ_OLD_ID[id] || id);
+    this.sensorId = id;
+    this.devInterval = info[7] | (info[8] << 8) | (info[9] << 16) | (info[10] << 24);
+    const name = info.length > 14 ? new TextDecoder().decode(info.slice(14)).replace(/\0+$/, '').trim() : '';
+    if (name) this.deviceName = name;
+    this.def = EZ_SENSORS[id] || null;
+    this.minMs = this.def ? this.def[2] : 10;
+    this.event = this.def ? this.def[2] === 0 : false;
+    const ch = this.def ? this.def[1] : [['측정값', '']];
+    this.channels = ch.map(([n, unit], i) => ({ id: i, name: n, unit, enabled: i === 0 || ch.length <= 2 }));
+    this.deviceName = `${this.deviceName} (${this.def ? this.def[0] : `센서 ${id}`})`;
+    this.emit('channels', this.channels);
+    this.emit('status', this.def ? `${this.deviceName} 연결됨` : `${this.deviceName} 연결됨 (센서 종류 ${id}번을 알 수 없음)`);
+    await this._stream(this._previewMs()).catch(e => this.emit('status', `${this.deviceName}: ${e.message}`));
+  }
+
+  _previewMs() { return this.event ? 0 : Math.max(500, this.minMs || 0); }
+
+  _timeSync() {
+    const d = new Date(), y = d.getUTCFullYear(), ms = d.getUTCMilliseconds();
+    return this._cmd(EZ_CMD.TIME_SYNC, [y & 0xff, y >> 8, d.getUTCMonth() + 1, d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds(), ms & 0xff, ms >> 8]);
+  }
+
+  applyDecoder(decoder) {
+    if (this.proto) { this.config.decoder = decoder; this.emit('channels', this.channels); return; }
+    super.applyDecoder(decoder);
+  }
+
+  // 쓰기는 한 번에 하나씩 (동시에 쓰면 블루투스 오류가 남)
+  _tx(bytes) {
+    const run = async () => {
+      const c = this.rxChar, p = c.properties || {};
+      if (p.writeWithoutResponse) {
+        try { await c.writeValueWithoutResponse(bytes); return; } catch (e) { if (!p.write) throw e; }
+      }
+      await c.writeValue(bytes);
+    };
+    this.wq = (this.wq || Promise.resolve()).then(run, run);
+    return this.wq;
+  }
+
+  // 명령 보내기. waitMs를 주면 응답(명령|0x80)을 기다려 {result, data}를 돌려줌
+  _cmd(cmd, payload = [], waitMs = 0) {
+    const bytes = ezFrame(cmd, payload);
+    if (!waitMs) return this._tx(bytes).catch(e => console.warn('EZ-nano 쓰기 실패', e));
+    const key = cmd | 0x80;
+    return new Promise((resolve, reject) => {
+      const w = { resolve, reject };
+      w.timer = setTimeout(() => { if (this.waiters[key] === w) delete this.waiters[key]; reject(new Error('센서 보드 응답 없음')); }, waitMs);
+      this.waiters[key] = w;
+      this._tx(bytes).catch(e => { clearTimeout(w.timer); if (this.waiters[key] === w) delete this.waiters[key]; reject(e); });
+    });
+  }
+
+  async _check(cmd, payload, waitMs) {
+    const r = await this._cmd(cmd, payload, waitMs);
+    if (r.result !== 0) throw new Error(EZ_ERR[r.result] || `센서 보드 오류 ${r.result}`);
+    return r;
+  }
+
+  // 정지 → (간격이 다르면) 센서·간격 설정 → 시작
+  async _stream(ms) {
+    await this._cmd(EZ_CMD.STOP, [], 800).catch(() => {});
+    if (ms !== this.devInterval && !(this.event && this.devInterval === 0)) {
+      await this._check(EZ_CMD.SET_SENSOR, [this.rawId, ...u32le(ms)], 1200);
+      this.devInterval = ms;
+    }
+    this.periodMs = ms;
+    this.ts0 = null;
+    this.row = 0;
+    if (this.wantMeasure) this.measuring = true;
+    await this._check(EZ_CMD.START, [], 1200);
+  }
+
+  _onNotify(uuid, dv) {
+    if (!this.proto) return super._onNotify(uuid, dv);
+    const bytes = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength).slice();
+    this.emit('raw', { uuid, bytes });
+    // 프레임은 알림 여러 개에 걸쳐 올 수 있음 → C0부터 C1까지 모아서 읽음
+    for (const b of bytes) {
+      if (b === 0xc0) { this.frame = []; continue; }
+      if (!this.frame) continue;
+      if (b === 0xc1) { const f = this.frame; this.frame = null; this._onFrame(f); continue; }
+      this.frame.push(b);
+      if (this.frame.length > 1024) this.frame = null;
+    }
+  }
+
+  _onFrame(esc) {
+    const b = [];
+    for (let i = 0; i < esc.length; i++) {
+      let x = esc[i];
+      if (x === 0xdb) {
+        const y = esc[++i];
+        if (y === 0xdc) x = 0xc0; else if (y === 0xdd) x = 0xc1; else if (y === 0xde) x = 0xdb; else return;
+      }
+      b.push(x);
+    }
+    if (b.length < 5 || b[0] !== 0x11) return;
+    if (ezCrc(b.slice(0, -1)) !== b[b.length - 1]) return; // 깨진 프레임은 버림
+    const cmd = b[1];
+    if (EZ_RESP.has(cmd)) {
+      const len = b[3] | (b[4] << 8);
+      const data = Uint8Array.from(b.slice(5, 5 + len));
+      const w = this.waiters[cmd];
+      if (w) { delete this.waiters[cmd]; clearTimeout(w.timer); w.resolve({ result: b[2], data }); }
+      return;
+    }
+    const len = b[2] | (b[3] << 8);
+    const data = Uint8Array.from(b.slice(4, 4 + len));
+    if (cmd === 8 || cmd === 9) this._onData(cmd, data);
+    else if (cmd === 134) this.emit('status', `${this.deviceName}: 센서 오류 — 보드에 센서가 잘 꽂혀 있는지 확인하세요`);
+  }
+
+  // 측정값(8)·묶음 측정값(9) → [{ts, vals}]
+  _onData(cmd, d) {
+    const v = new DataView(d.buffer, d.byteOffset, d.byteLength);
+    const L = d.length;
+    const f32 = (o, n) => Array.from({ length: n }, (_, k) => v.getFloat32(o + 4 * k, true));
+    const u64 = o => v.getUint32(o + 4, true) * 4294967296 + v.getUint32(o, true);
+    const out = [];
+    if (cmd === 8) {
+      if (L >= 5 && L % 4 === 1) out.push({ ts: v.getUint32(1, true), w: true, vals: f32(5, (L - 5) / 4) });
+      else if (L >= 12 && L % 4 === 0) out.push({ ts: u64(4), vals: f32(12, (L - 12) / 4) });
+    } else if (L === 13) {
+      const ts = v.getUint32(1, true), iv = this.periodMs || 10;
+      out.push({ ts, w: true, vals: [v.getFloat32(5, true)] }, { ts: ts + iv, w: true, vals: [v.getFloat32(9, true)] });
+    } else if (L >= 20) {
+      const ts = u64(6), iv = v.getUint32(14, true), n = d[18], c = d[19];
+      if (L !== 20 + n * c * 4) return;
+      for (let i = 0; i < n; i++) out.push({ ts: ts + i * iv, vals: f32(20 + i * c * 4, c) });
+    }
+    out.forEach(s => this._emitVals(s));
+  }
+
+  _emitVals({ ts, w, vals }) {
+    if (!this.def && vals.length > this.channels.length) {
+      // 모르는 센서: 받은 값 개수만큼 채널을 만듦
+      for (let i = this.channels.length; i < vals.length; i++) this.channels.push({ id: i, name: `값${i + 1}`, unit: '', enabled: true });
+      this.emit('channels', this.channels);
+    }
+    const values = {};
+    this.channels.forEach((c, i) => {
+      const x = vals[i];
+      if (c.enabled && x !== undefined && isFinite(x)) values[c.id] = Math.round(x * 10000) / 10000;
+    });
+    if (!Object.keys(values).length) return;
+    if (!this.measuring) { this.emit('preview', values); return; }
+    // 시간은 센서 시계 기준 (측정 시작 후 첫 값 = 0초)
+    if (this.ts0 === null) this.ts0 = ts;
+    let dt = w ? ((ts - this.ts0) % 4294967296 + 4294967296) % 4294967296 : ts - this.ts0;
+    if (!(dt >= 0 && dt < 864e6)) dt = this.row * this.periodMs; // 시계가 이상하면 간격으로 계산
+    this.row++;
+    this.emit('sample', { t: Math.round(dt) / 1000, values });
+  }
+
+  async start(intervalMs) {
+    if (!this.proto) return super.start(intervalMs);
+    if (!this.channels.some(c => c.enabled)) throw new Error('측정할 채널을 하나 이상 선택하세요.');
+    const ms = this.event ? 0 : Math.max(this.minMs || 10, Math.round(intervalMs));
+    this.measuring = false;
+    this.wantMeasure = true;
+    try {
+      await this._stream(ms);
+    } catch (e) {
+      this.measuring = false;
+      throw new Error(`${this.deviceName}: 측정 시작 실패 — ${e.message}`);
+    } finally { this.wantMeasure = false; }
+    return ms || intervalMs;
+  }
+
+  async stop() {
+    if (!this.proto) return super.stop();
+    this.measuring = false;
+    if (this.connected && !this.closing) await this._stream(this._previewMs()).catch(() => {}); // 다시 실시간 값만 보여 줌
+  }
+
+  _onDisconnected() {
+    Object.values(this.waiters).forEach(w => { clearTimeout(w.timer); w.reject(new Error('연결 끊김')); });
+    this.waiters = {};
+    this.frame = null;
+    super._onDisconnected();
+  }
+
+  async disconnect() {
+    this.closing = true;
+    this.measuring = false;
+    if (this.proto && this.connected) await this._cmd(EZ_CMD.STOP, [], 500).catch(() => {});
     await super.disconnect();
   }
 }
