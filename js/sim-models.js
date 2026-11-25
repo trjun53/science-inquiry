@@ -66,7 +66,8 @@ const EXP_SIM = {
 
   // 열과 우리 생활
   'heat-measure': ({ t, k }) => [approach(t, ROOM, pick([ROOM, 17, 45, 2], k), 3)],
-  'heat-contact': ({ t }) => [approach(t, 50, 30, 70), approach(t, 10, 30, 70)], // 두 물의 온도가 같아짐
+  // 비커(따뜻한 물 약 200 mL)를 수조(차가운 물 약 1 L)에 넣음 → 물이 많은 쪽 온도에 가깝게 같아짐 (30초 뒤 넣음)
+  'heat-contact': ({ t }) => t < 30 ? [50, 10] : [approach(t - 30, 50, 17, 70), approach(t - 30, 10, 16.5, 110)],
   'heat-move': ({ t }) => [approach(t, ROOM, 72, 35), ROOM + (46 - ROOM) * Math.max(0, 1 - Math.exp(-Math.max(0, t - 18) / 60))], // 먼 곳은 늦게 오름
   // 대류: 따뜻한 물이 위로 올라가 위쪽이 먼저 따뜻해짐 / 복사: 빛을 받는 곳만 따뜻해짐 (30초 뒤 시작)
   'heat-convect': ({ t }) => t < 30 ? [15, 15] : [approach(t - 30, 15, 27, 50), 15 + 3 * (1 - Math.exp(-(t - 30) / 240))],
