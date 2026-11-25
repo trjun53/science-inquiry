@@ -1114,6 +1114,12 @@ const EZ_SENSORS = {
 };
 // 펌웨어 1.1.6보다 옛 버전은 센서 ID 번호가 달라서 바꿔 읽음
 const EZ_OLD_ID = { 37: 101, 38: 102, 39: 103, 40: 20, 41: 40 };
+const EZ_OLD_RAW = { 101: 37, 102: 38, 103: 39, 20: 40, 40: 41 }; // 거꾸로(설정 명령을 보낼 때)
+// 실험 설계의 센서 종류 → 알맞은 EZ-nano 센서 ID
+const EZ_FOR_TYPE = {
+  temp: [23, 11, 15], humidity: [24], co2: [25], light: [21], sound: [22], pressure: [14],
+  force: [38, 40, 39], voltage: [36, 35], current: [33], ph: [5], motion: [37], accel: [27, 31], magnetic: [26],
+};
 
 function ezCrc(bytes) {
   let t = 0;
@@ -1247,23 +1253,53 @@ class EzNanoDriver extends GenericBleDriver {
   async _useInfo(info) {
     const fw = [info[3], info[4], info[5]];
     this.fw = fw.join('.');
-    const old = fw[0] * 10000 + fw[1] * 100 + fw[2] < 10106;
+    this.fwNum = fw[0] * 10000 + fw[1] * 100 + fw[2];
+    this.oldFw = this.fwNum < 10106;
     this.rawId = info[6]; // 보드에 설정된 센서 번호(설정 명령에는 이 번호를 그대로 씀)
     let id = this.rawId;
-    if (old) id = id >= 20 && id <= 36 ? id + 1 : (EZ_OLD_ID[id] || id);
-    this.sensorId = id;
+    if (this.oldFw) id = id >= 20 && id <= 36 ? id + 1 : (EZ_OLD_ID[id] || id);
     this.devInterval = info[7] | (info[8] << 8) | (info[9] << 16) | (info[10] << 24);
     const name = info.length > 14 ? new TextDecoder().decode(info.slice(14)).replace(/\0+$/, '').trim() : '';
-    if (name) this.deviceName = name;
+    this.baseName = name || this.deviceName;
+    this._applySensor(id);
+    this.emit('status', this.def ? `${this.deviceName} 연결됨` : `${this.deviceName} 연결됨 (센서 종류 ${id}번을 알 수 없음)`);
+    await this._stream(this._previewMs()).catch(e => this.emit('status', `${this.deviceName}: ${e.message}`));
+  }
+
+  // 센서 종류 → 채널·최소 간격·표시 이름
+  _applySensor(id) {
+    this.sensorId = id;
     this.def = EZ_SENSORS[id] || null;
     this.minMs = this.def ? this.def[2] : 10;
     this.event = this.def ? this.def[2] === 0 : false;
     const ch = this.def ? this.def[1] : [['측정값', '']];
     this.channels = ch.map(([n, unit], i) => ({ id: i, name: n, unit, enabled: i === 0 || ch.length <= 2 }));
-    this.deviceName = `${this.deviceName} (${this.def ? this.def[0] : `센서 ${id}`})`;
+    this.deviceName = `${this.baseName} (${this.def ? this.def[0] : `센서 ${id}`})`;
     this.emit('channels', this.channels);
-    this.emit('status', this.def ? `${this.deviceName} 연결됨` : `${this.deviceName} 연결됨 (센서 종류 ${id}번을 알 수 없음)`);
-    await this._stream(this._previewMs()).catch(e => this.emit('status', `${this.deviceName}: ${e.message}`));
+  }
+
+  // 이 보드에서 고를 수 있는 센서 목록 (펌웨어가 옛 버전이면 지원하지 않는 힘 센서는 뺌)
+  sensorOptions() {
+    return Object.keys(EZ_SENSORS).map(Number)
+      .filter(id => !(this.oldFw && (id === 38 || id === 39)) && !(id === 40 && this.fwNum < 10105))
+      .map(id => ({ id, name: EZ_SENSORS[id][0] }));
+  }
+
+  // 보드에 꽂은 센서 종류를 바꿈 (제조사 앱 EZ·ON의 센서 설정과 같은 명령, 보드에 저장됨)
+  async setSensor(id) {
+    id = Number(id);
+    if (!this.proto || !this.connected) throw new Error('센서 보드와 연결되어 있지 않습니다.');
+    if (this.measuring) throw new Error('측정 중에는 센서 종류를 바꿀 수 없어요. 먼저 정지하세요.');
+    if (!EZ_SENSORS[id] || id === this.sensorId) return;
+    const raw = this.oldFw ? (id >= 21 && id <= 37 ? id - 1 : (EZ_OLD_RAW[id] || id)) : id;
+    const ms = EZ_SENSORS[id][2] === 0 ? 0 : Math.max(500, EZ_SENSORS[id][2]);
+    await this._cmd(EZ_CMD.STOP, [], 800).catch(() => {});
+    await this._check(EZ_CMD.SET_SENSOR, [raw, ...u32le(ms)], 1500);
+    this.rawId = raw;
+    this.devInterval = ms;
+    this._applySensor(id);
+    this.emit('status', `${this.deviceName} 연결됨`);
+    await this._stream(this._previewMs()); // 오류(예: 센서가 꽂혀 있지 않음)는 화면에 알림
   }
 
   _previewMs() { return this.event ? 0 : Math.max(500, this.minMs || 0); }

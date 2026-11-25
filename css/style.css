@@ -393,6 +393,8 @@ aside .side { position: static; }
 .status { font-weight: 600; color: var(--ink2); font-size: 14px; }
 .status.ok { color: var(--ok); }
 .channels { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+.ez-sensor { margin-bottom: 10px; }
+.note.ez-hint { background: #fff7ed; color: #9a3412; margin: 0 0 12px; }
 .channels em { color: var(--muted); font-style: normal; }
 .file-drop { display: block; border: 2px dashed #cbd5e1; border-radius: 12px; padding: 22px; text-align: center; cursor: pointer; color: var(--primary); font-weight: 600; }
 .file-drop input { display: none; }

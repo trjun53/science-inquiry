@@ -667,12 +667,28 @@ function brandPanel() {
     ${preset ? `<p class="note">${esc(preset.note)}</p>${decoderPanel()}` : ''}`;
 }
 
+// 이지메이커 EZ-nano: 보드에 설정된 센서 종류를 보여 주고 바꿀 수 있게 함
+function ezSensorBox(d) {
+  if (typeof EzNanoDriver === 'undefined' || !(d instanceof EzNanoDriver) || !d.proto) return '';
+  const want = EZ_FOR_TYPE[state.design.sensor] || [];
+  const opts = d.sensorOptions();
+  if (!opts.some(o => o.id === d.sensorId)) opts.unshift({ id: d.sensorId, name: `센서 ${d.sensorId}번 (알 수 없음)` });
+  const diy = d.sensorId >= 1 && d.sensorId <= 4;
+  const hint = diy
+    ? `<p class="note ez-hint">보드가 ‘${esc(EZ_SENSORS[d.sensorId][0])}’(직접 만든 센서용) 모드로 설정되어 있어서, 무슨 센서인지 알 수 없고 원시 값(숫자)만 나와요. 위에서 보드에 꽂은 센서를 골라 주세요.${want.length ? ' ★는 실험 설계에서 고른 센서에 맞는 항목이에요.' : ''}</p>`
+    : '';
+  return `<label class="field ez-sensor"><span>보드에 꽂은 센서 <small>EZ-nano 보드에 저장된 센서 종류예요. 바꾸면 보드 설정도 함께 바뀌어요(EZ·ON에서 바꾼 것과 같아요).</small></span>
+    <select data-action="ezSensor" data-slot="${ui.slot}" ${driver.measuring ? 'disabled' : ''}>
+      ${opts.map(o => `<option value="${o.id}" ${o.id === d.sensorId ? 'selected' : ''}>${want.includes(o.id) ? '★ ' : ''}${esc(o.name)}</option>`).join('')}
+    </select></label>${hint}`;
+}
+
 function channelBox() {
   const cur = sd();
   if (!cur || !cur.connected || cur.brand !== ui.brand) return '';
   if (!cur.channels.length) return '<p class="muted small">채널 정보를 기다리는 중…</p>';
   const shown = c => (driver.channels.find(x => x.id === ui.slot * 100 + c.id) || c).name;
-  return `<div class="channels"><div class="muted small">측정 채널 <span class="slot-badge">센서 ${ui.slot + 1}</span></div>${cur.channels.map((c, i) => `
+  return `${ezSensorBox(cur)}<div class="channels"><div class="muted small">측정 채널 <span class="slot-badge">센서 ${ui.slot + 1}</span></div>${cur.channels.map((c, i) => `
     <label class="check"><input type="checkbox" data-action="toggleChannel" data-i="${i}" ${c.enabled ? 'checked' : ''} ${driver.measuring ? 'disabled' : ''}>
     <span>${esc(shown(c))} ${c.unit ? `<em>(${esc(c.unit)})</em>` : ''}</span></label>`).join('')}</div>`;
 }
@@ -1933,6 +1949,16 @@ document.addEventListener('change', e => {
   const el = e.target;
   const a = el.dataset.action;
   if (a === 'toggleChannel' || a === 'toggleRun' || a === 'toggleStd' || a === 'pickChannel' || a === 'pickChannel2') return actions[a](el);
+  if (a === 'ezSensor') {
+    const i = Number(el.dataset.slot), d = driver.slots[i];
+    if (!d || !d.setSensor) return;
+    el.disabled = true;
+    d.setSensor(el.value)
+      .then(() => toast(`센서 ${i + 1}: ${d.deviceName}(으)로 설정했어요`))
+      .catch(err => toast('센서 종류 변경: ' + err.message, 'warn'))
+      .finally(() => { refreshBrandPanel(); updateMeasureButtons(); updateLive(); });
+    return;
+  }
   if (a === 'simSensor') {
     state.design.sensor = el.value; save();
     driver.slots.forEach(d => { if (d && d.brand === 'sim' && !d.measuring) d.setSensor(el.value); });
